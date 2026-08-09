@@ -216,3 +216,15 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Project environments
+.env.*
+!.env.*.example
+
+# Node / tooling
+node_modules/
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
