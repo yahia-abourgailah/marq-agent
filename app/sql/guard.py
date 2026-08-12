@@ -9,7 +9,7 @@ from dataclasses import dataclass
 import sqlglot
 from sqlglot import expressions as exp
 
-from app.sql.catalogue import get_deals_catalogue
+from app.sql.catalogue import get_catalogue
 
 
 class SQLGuardError(ValueError):
@@ -87,6 +87,16 @@ class SQLGuard:
     """
     Validate AI-generated SQL before it reaches PostgreSQL.
 
+    [claude] `tables` scopes the allowlist.
+
+    The guard used to call get_catalogue() itself, so every guard in the
+    process permitted the same tables. That is fine with one agent and wrong
+    with several: a Leads Agent and a Deals Agent should not share a query
+    surface, and a guard that cannot be narrowed cannot express that.
+
+    Passing None keeps the full catalogue, so existing callers are
+    unaffected.
+
     Responsibilities
     -----------------
     The Guard is a defense-in-depth query-safety layer.
@@ -119,6 +129,28 @@ class SQLGuard:
         PostgreSQL role -> database permissions
         RLS -> row-level authorization
     """
+
+    # [claude] Table names this guard permits. None means the whole
+    # catalogue.
+    tables: frozenset[str] | None = None
+
+    def allowed_tables(self) -> set[str]:
+        """
+        Resolve the permitted table names, lowercased.
+
+        Deriving the default from the catalogue keeps the schema the agent
+        is shown and the surface the guard permits from drifting apart.
+        """
+
+        if self.tables is not None:
+            return {name.lower() for name in self.tables}
+
+        catalogue_tables = get_catalogue().get("tables", {})
+
+        if not isinstance(catalogue_tables, dict):
+            raise SQLGuardError("Invalid SQL catalogue.")
+
+        return {str(name).lower() for name in catalogue_tables}
 
     def validate(self, query: str) -> str:
         """
@@ -249,22 +281,7 @@ class SQLGuard:
         # is allowed to see.
         # ---------------------------------------------------------
 
-        catalogue = get_deals_catalogue()
-
-        tables = catalogue.get(
-            "tables",
-            {},
-        )
-
-        if not isinstance(tables, dict):
-            raise SQLGuardError(
-                "Invalid SQL catalogue."
-            )
-
-        allowed_tables = {
-            str(table_name).lower()
-            for table_name in tables.keys()
-        }
+        allowed_tables = self.allowed_tables()
 
         # CTE names are temporary query-local names and therefore
         # are not real database tables.

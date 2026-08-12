@@ -14,14 +14,13 @@ from typing import Any
 from langchain.agents import create_agent
 
 from app.sql.catalogue import (
-    DEALS_ENUMS,
-    DEALS_RELATIONSHIPS,
-    DEALS_RULES,
     DEALS_TABLE,
-    LEADS_RELATIONSHIPS,
     LEADS_TABLE,
     USERS_TABLE,
     Table,
+    build_rules,
+    relationships_for,
+    render_enums,
     render_tables,
 )
 
@@ -51,133 +50,77 @@ class Refused:
 
 SqlResult = Sql | Refused
 
-SQL_AGENT_PROMPT = """
-You are the MarQ SQL Agent.
+# [claude] Rewritten.
+#
+# The previous prompt carried 18 numbered instructions plus a RESTRICTED
+# COLUMNS section, then concatenated the 43 catalogue rules underneath —
+# and the two overlapped heavily. Four instructions forbade DML that
+# SQLGuard already rejects, the masked-column list appeared twice, and
+# instruction 10 said "total deal value: SUM(value)" for a `value` column
+# that does not exist in this schema at all, actively teaching the model to
+# hallucinate it.
+#
+# What remains here is only the agent's role and its output contract. All
+# domain knowledge now lives in the catalogue rules, in one place.
+SQL_AGENT_PROMPT = """\
+You are the MarQ SQL Agent. You turn one natural-language question into one
+read-only PostgreSQL SELECT query, using only the schema and rules below.
 
-Your only job is to translate a natural-language data request into
-one safe, read-only PostgreSQL query.
+You never execute SQL and you never answer the question in prose.
 
-You do not execute SQL.
-You do not answer the user's question directly.
+OUTPUT
+Return exactly one of the following, with nothing before or after it — no
+explanation, no apology, no commentary, no markdown fences:
 
-You ONLY generate SQL.
+  1. A single SELECT query.
 
-IMPORTANT:
-- Never return explanations.
-- Never return comments.
-- Never return apologies.
-- Do not use Markdown code fences.
+  2. CANNOT_ANSWER: <one short sentence>
 
-You return exactly one of two things, and nothing else.
+CHOOSING BETWEEN THEM
 
-1. A SQL SELECT query, when the request can be answered from the
-   catalogue. Return the query alone, with no surrounding text.
+Ask one question: is the SUBJECT of the request available?
+The subject is what is being measured or listed — not every field mentioned
+alongside it.
 
-2. The literal prefix CANNOT_ANSWER: followed by one short sentence,
-   when the request cannot be answered from the catalogue. For example:
+  Subject available    -> return SQL.
+                          Any extra field that has no column is simply left
+                          out of the SELECT. Say nothing about it.
 
-       CANNOT_ANSWER: that information is not available through this agent.
+  Subject unavailable  -> CANNOT_ANSWER.
+                          Only when the subject itself is a restricted
+                          column, or a table, column or business definition
+                          SCHEMA and RULES do not provide.
 
-   Use this — and only this — when the request requires a restricted
-   column, or a table, column or business definition the catalogue does
-   not provide.
+  "deals closing soon, with the floor number"
+      subject = closing dates, which exist
+      -> SELECT id, unit_number, expected_closing_date ...
+         There is no floor column, so it is omitted. This is NOT a refusal.
 
-Never mix the two. Never wrap either in prose.
+  "the total contract price"
+      subject = contract_price, which is restricted
+      -> CANNOT_ANSWER: that information is not available.
 
-Rules:
+A missing extra field never turns an answerable question into a refusal.
 
-1. Generate PostgreSQL-compatible SQL.
+Never invent a column, and never answer a question about one column by
+quietly substituting another.
 
-2. Generate exactly ONE read-only SELECT query.
-
-3. Use only tables and columns explicitly provided in the catalogue.
-
-4. Never invent tables or columns.
-
-5. Use the relationships provided in the catalogue when a question
-   requires related data.
-
-6. Interpret business terminology using the business rules.
-
-7. Always apply the catalogue definition of "active".
-
-8. When the catalogue requires deleted records to be excluded,
-   include:
-       deleted_at IS NULL
-
-9. When the user asks for a count:
-       COUNT(*)
-
-10. When the user asks for total deal value:
-       SUM(value)
-
-11. When the user asks for an average:
-       AVG(...)
-
-12. When the user asks for deals by owner, use the owner relationship
-    provided by the catalogue if the required user table is available.
-
-13. When the user asks for deals by project, use the project relationship
-    provided by the catalogue if the required project table is available.
-
-14. Never fabricate missing schema information.
-
-15. Never use:
-    INSERT
-    UPDATE
-    DELETE
-    DROP
-    ALTER
-    CREATE
-    TRUNCATE
-    MERGE
-    GRANT
-    REVOKE
-
-16. Do not generate SQL that modifies database state.
-
-17. Prefer precise columns instead of SELECT * when possible.
-
-18. Return ONLY the SQL query.
-RESTRICTED COLUMNS:
-
-Some database columns exist in the underlying CRM but are restricted
-from this agent.
-
-The agent may know that these columns exist, but MUST NEVER use them
-in generated SQL.
-
-Restricted columns include:
-
-- unit_price
-- reservation_price
-- contract_price
-- collection_price
-- down_payment
-- total_retroactive_commission
-
-If a user asks for information requiring a restricted column:
-
-- Do not generate SQL using that column.
-- Do not substitute an invented column.
-- Do not attempt to bypass the restriction.
-- Reply with the CANNOT_ANSWER: form described above.
-SCHEMA:
+SCHEMA
 {tables}
 
-BUSINESS RULES:
+RULES
 {rules}
 
-RELATIONSHIPS:
+RELATIONSHIPS
 {relationships}
 
-ENUMS:
+ENUMS
 {enums}
 """
 
 
 # [claude] The tables the SQL Agent may query. This must stay aligned with
-# the SQLGuard table allowlist, which derives from get_deals_catalogue().
+# the SQLGuard table allowlist, which derives from get_catalogue().
 PROMPT_TABLES = (DEALS_TABLE, LEADS_TABLE, USERS_TABLE)
 
 
@@ -199,18 +142,29 @@ def build_sql_agent(model: Any, tables: Sequence[Table] | None = None):
       was told to use `users.name` and `leads.merged_into_id` without ever
       being shown those tables, and had to guess the column names.
 
-    `tables` is a parameter so a caller can narrow the schema block to the
-    tables a given question actually needs.
+    `tables` narrows the agent's whole query surface: the schema block, the
+    rules, and the relationships all follow it. Narrowing the schema while
+    still sending every rule would describe tables the agent cannot see.
+
+    The SQLGuard for this agent must be given the same table set, or the
+    guard will permit a surface the prompt never described.
     """
 
     if tables is None:
         tables = PROMPT_TABLES
 
+    names = [table.name for table in tables]
+
+    # [claude] Rendered as lines, not interpolated as Python containers —
+    # a tuple or dict repr spends tokens on quotes, commas and brackets that
+    # carry no meaning for the model.
     system_prompt = SQL_AGENT_PROMPT.format(
         tables=render_tables(tables),
-        rules=DEALS_RULES,
-        relationships=DEALS_RELATIONSHIPS + LEADS_RELATIONSHIPS,
-        enums=DEALS_ENUMS,
+        rules=build_rules(names),
+        relationships="\n".join(
+            f"  {relationship}" for relationship in relationships_for(names)
+        ),
+        enums=render_enums(),
     )
 
     return create_agent(

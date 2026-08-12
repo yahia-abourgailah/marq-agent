@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.db.repositories.deals import DealsRepository
+from app.db.repositories.sql import SQLRepository
 
 
 class FakeExecutor:
@@ -36,7 +36,7 @@ async def test_execute_read_validates_and_executes_query():
     executor = FakeExecutor()
     guard = FakeGuard()
 
-    repository = DealsRepository(
+    repository = SQLRepository(
         executor=executor,
         guard=guard,
     )
@@ -65,7 +65,7 @@ async def test_execute_read_passes_parameters():
     executor = FakeExecutor()
     guard = FakeGuard()
 
-    repository = DealsRepository(
+    repository = SQLRepository(
         executor=executor,
         guard=guard,
     )

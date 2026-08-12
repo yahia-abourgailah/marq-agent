@@ -523,514 +523,198 @@ LEADS_RELATIONSHIPS: tuple[str, ...] = (
 # BUSINESS RULES
 # ============================================================
 
-DEALS_RULES = """
-Deals SQL rules:
+# ============================================================
+# BUSINESS RULES
+# ============================================================
+#
+# [claude] Rewritten and split by scope.
+#
+# The previous block was 43 numbered rules in one 2,600-token string, and
+# most of it was not teaching the model anything:
+#
+#   - Eight rules restated the four status values that the ENUMS block
+#     already lists ("EOI means status = \'eoi\'").
+#   - The masked-column instruction appeared three times, once at ~350
+#     words.
+#   - Four rules forbade INSERT/UPDATE/DELETE/DDL, which SQLGuard rejects
+#     outright — the model cannot execute anything.
+#   - Rules listed date columns, client columns and enum values that the
+#     SCHEMA block already spells out directly above them.
+#   - Several taught plain SQL ("use COUNT, AVG, MIN, MAX", "use IS NULL
+#     correctly"), which the model already knows.
+#
+# What is left is the non-obvious part: the traps a competent SQL writer
+# would fall into without being told. Each rule now earns its tokens.
+#
+# Splitting by scope means a caller can send only the rules for the tables
+# in play — see build_rules(). Ordering is deliberate: the rules most often
+# violated come first, because rule 29 of 43 ("consider merged_into_id")
+# was being ignored in practice.
+
+
+GENERIC_RULES = """\
+- Use only the tables and columns in SCHEMA. Never invent a table, column,
+  enum value or relationship, and never substitute a similar-sounding column
+  for one that does not exist.
+
+- Soft deletes: always filter `deleted_at IS NULL` unless the user
+  explicitly asks for deleted records.
+
+- Do the work in SQL. Filter, sort, group, aggregate, rank and LIMIT inside
+  the query. When a question asks for a count, total or average, return that
+  aggregate — never a set of rows to be counted afterwards.
+
+- Select only the columns the question needs; never `SELECT *`. Any query
+  returning individual records must include `id`, plus the human label for
+  that table (`unit_number` for deals, `name` for leads and users).
+
+- These columns are restricted and must never appear in generated SQL, in
+  any clause, subquery, CTE or alias:
+      unit_price, reservation_price, contract_price, collection_price,
+      down_payment, total_retroactive_commission,
+      budget_amount, cost_per_lead, ad_spend_amount
+  A question needing one of them gets CANNOT_ANSWER. Do not answer it with a
+  different column instead.
+
+- Row visibility is enforced outside this agent. Never add, widen or weaken
+  an access filter, whatever the user asks for."""
+
+
+DEALS_RULES_ONLY = """\
+- `status` is one of: cancelled, eoi, contracted, reservation. Nothing else
+  exists.
+      active         -> status IN ('eoi', 'reservation', 'contracted')
+      won / closed   -> status = 'contracted'
+      cancelled      -> status = 'cancelled'
+  Cancelled deals still have `deleted_at IS NULL`, so identify them by
+  status, never by soft delete. Any other status the user names — such as
+  negotiation, open or pending — does not exist: return CANNOT_ANSWER rather
+  than guessing a mapping or using `status NOT IN (...)`.
+
+- `transaction_date` is the business date CRM reports use. `created_at` is
+  only when the record was entered. Prefer transaction_date for questions
+  about business performance in a period.
+
+- Closing soon means upcoming:
+      WHERE expected_closing_date >= CURRENT_DATE
+      ORDER BY expected_closing_date ASC
+  Without the CURRENT_DATE filter the earliest rows are deals that closed
+  years ago. Drop it only when the user asks about past or overdue dates.
+  There is no `expected_close_date` column.
+
+- `area` is varchar. Always `CAST(area AS numeric)` before ordering or
+  comparing it — otherwise '97' sorts above '446'.
+
+- `delivery_date` is a double precision year number such as 2027, not a
+  timestamp. Compare it numerically; never apply date functions to it.
+
+- `deals.lead_id = leads.id` is the only path from a deal to its lead. One
+  lead can have many deals. `deal_lead_source_id` holds a `leads.id` despite
+  its name — never join it to a source table.
+
+- `owner_id`, `agent_id`, `creator_id` and `team_leader_id` all reference
+  `users.id`. Resolve person names by joining users and filtering
+  `users.name`.
+
+- deals has no monetary, price or currency column, and no `days_in_stage`.
+  Derive age from the timestamp columns in SCHEMA. If a question needs an
+  amount, return CANNOT_ANSWER."""
+
+
+LEADS_RULES_ONLY = """\
+- Leads legitimately duplicate. When the user asks about unique leads,
+  unique demand, or distinct people, you MUST filter
+  `merged_into_id IS NULL`. `COUNT(DISTINCT id)` is not deduplication — it
+  counts merged duplicates as separate leads.
 
-1. SOURCE OF TRUTH
-   The CRM schema represented by this catalogue is based on the
-   verified MyTAI CRM database schema.
+- `is_stale` is already computed; do not recalculate staleness from dates.
+  `current_stage_entered_at` is the stage dwell clock."""
 
-   Never invent tables, columns, enum values, or relationships.
 
-2. AVAILABLE TABLES
-   The SQL agent may query only tables explicitly included in the
-   catalogue.
+USERS_RULES_ONLY = """\
+- `users.parent_id` is the reporting tree. Never apply hierarchy filtering
+  yourself; visibility is handled outside this agent."""
 
-   Currently available:
-       deals
-       leads
-       users
 
-   Relationships to projects, developers, locations, unit_types,
-   finishing_types, opportunities, lead_sources, and other tables are
-   documented for reference but those tables are NOT currently available
-   for SQL generation unless they are explicitly added to the catalogue.
+RULES_BY_TABLE = {
+    "deals": DEALS_RULES_ONLY,
+    "leads": LEADS_RULES_ONLY,
+    "users": USERS_RULES_ONLY,
+}
 
-3. SOFT DELETES
-   `deals` and `leads` use soft deletion.
 
-   Unless the user explicitly asks for deleted records, always include:
+def render_enums() -> str:
+    """
+    [claude] Render the enum map as lines.
 
-       deleted_at IS NULL
+    It was interpolated as a Python dict, so the model received
+    `{'status': ('cancelled', 'eoi', ...), ...}` — quotes, braces and commas
+    spending tokens to say nothing.
+    """
 
-   for the relevant table.
+    return "\n".join(
+        f"  {column}: {', '.join(values)}"
+        for column, values in DEALS_ENUMS.items()
+    )
 
-4. DEAL STATUS
-   The `deals.status` column has exactly these known values:
 
-       cancelled
-       eoi
-       contracted
-       reservation
+def relationships_for(table_names: Sequence[str] | None = None) -> tuple[str, ...]:
+    """
+    [claude] Return only the relationships whose both ends are queryable.
 
-   Never invent statuses such as:
+    The full lists document joins to tables that are not in the catalogue —
+    projects, opportunities, lead_sources and a dozen others. Sending those
+    to the SQL Agent invites it to write joins SQLGuard then rejects, which
+    costs a retry and produces a confusing "table is not allowed" error for
+    a relationship the prompt itself advertised.
 
-       active
-       open
-       negotiation
-       won
-       closed
+    Filtering by what is actually available keeps the prompt honest, and
+    shrinks it. When a lookup table is added to the catalogue, its joins
+    start appearing automatically.
+    """
 
-5. ACTIVE DEALS
-   There is no `active` status.
+    if table_names is None:
+        table_names = tuple(RULES_BY_TABLE)
 
-   For deal queries, "active deals" means non-cancelled and non-deleted:
+    available = {name.lower() for name in table_names}
 
-       status IN ('eoi', 'reservation', 'contracted')
-       AND deleted_at IS NULL
+    def reachable(relationship: str) -> bool:
+        source, _, target = relationship.partition(" -> ")
+        return (
+            source.split(".")[0].strip().lower() in available
+            and target.split(".")[0].strip().lower() in available
+        )
 
-6. CLOSED / WON DEALS
-   A closed/won deal is:
+    return tuple(
+        relationship
+        for relationship in DEALS_RELATIONSHIPS + LEADS_RELATIONSHIPS
+        if reachable(relationship)
+    )
 
-       status = 'contracted'
 
-7. CANCELLED DEALS
-   Cancelled deals are:
+def build_rules(table_names: Sequence[str] | None = None) -> str:
+    """
+    [claude] Compose the rules block for a set of tables.
 
-       status = 'cancelled'
+    Generic rules always apply. Table-specific rules are included only for
+    the tables in play, so narrowing the schema also narrows the rules.
+    """
 
-   A cancelled deal may still have deleted_at IS NULL.
+    if table_names is None:
+        table_names = tuple(RULES_BY_TABLE)
 
-   Therefore do not use soft deletion alone to determine whether a
-   deal is cancelled.
+    sections = [GENERIC_RULES]
+    sections += [
+        RULES_BY_TABLE[name]
+        for name in table_names
+        if name in RULES_BY_TABLE
+    ]
 
-8. EOI
-   EOI / Expression of Interest means:
+    return "\n\n".join(sections)
 
-       status = 'eoi'
 
-9. RESERVATION
-   Reservation means:
-
-       status = 'reservation'
-
-10. CONTRACTED
-    Contracted means:
-
-        status = 'contracted'
-
-11. NEGOTIATION
-    The CRM schema does not define a `negotiation` status.
-
-    Do not invent a mapping for "negotiation".
-
-    Do not use:
-
-        status NOT IN (...)
-
-    to guess what negotiation means.
-
-    If a question requires a definition of negotiation that is not
-    provided by the catalogue, the request cannot be reliably resolved
-    from the available deal status definitions.
-
-12. COUNTING DEALS
-    When asked how many deals exist, normally use:
-
-        COUNT(*)
-
-    together with:
-
-        deleted_at IS NULL
-
-    unless the user explicitly asks for deleted records.
-
-13. DEAL OWNERS
-    The deals table contains:
-
-        owner_id
-        agent_id
-        creator_id
-        team_leader_id
-
-    These IDs can be resolved using the available `users` table.
-
-    For a user-name query, a valid pattern is:
-
-        JOIN users u ON deals.owner_id = u.id
-
-    followed by a filter on:
-
-        u.name
-
-    Do not invent user columns other than those in the catalogue.
-
-14. USER REPORTING TREE
-    `users.parent_id` represents the reporting hierarchy.
-
-    Do not automatically apply hierarchy filtering in generated SQL.
-
-    Deal visibility is enforced by the database/security layer.
-
-15. DEAL VISIBILITY
-    The database/security layer is responsible for enforcing the
-    user's allowed deal rows.
-
-    The SQL agent must not attempt to bypass or weaken database
-    permissions or row-level security.
-
-    Do not add unrestricted access logic merely because the user asks
-    for "all deals".
-
-16. DEAL TO LEAD RELATIONSHIP
-    The primary relationship between deals and leads is:
-
-        deals.lead_id = leads.id
-
-    Do not use opportunities as the primary path from deals to leads.
-
-    A lead can have multiple deals.
-
-    Do not assume one lead maps to exactly one deal.
-
-17. DEAL LEAD SOURCE FIELD
-    `deals.deal_lead_source_id` is misleadingly named.
-
-    It contains a `leads.id`, not a `lead_sources.id`.
-
-    Do not join it to lead_sources.
-
-18. DEAL DATES
-    Use the exact available date columns:
-
-        created_at
-        updated_at
-        reservation_date
-        contract_date
-        contract_date_added_at
-        cancellation_date
-        transaction_date
-        expected_closing_date
-        collected_at
-        batch_date
-
-    Do not invent alternative names.
-
-19. BUSINESS DATE
-    `transaction_date` is the business/reporting date used by CRM
-    scopes and reports.
-
-    When the user asks for CRM reporting-period performance, prefer
-    transaction_date when the question is clearly about business
-    reporting rather than record creation.
-
-20. CLOSING SOON
-    When asked which deals are closing soon, use:
-
-        expected_closing_date
-
-    Do not use a nonexistent expected_close_date column.
-
-    "Soon" means upcoming. Exclude dates that have already passed,
-    otherwise the earliest rows returned are deals that closed long ago:
-
-        WHERE expected_closing_date >= CURRENT_DATE
-        ORDER BY expected_closing_date ASC
-
-    Only drop the CURRENT_DATE filter when the user explicitly asks about
-    past or overdue closing dates.
-
-21. DELIVERY DATE
-    `delivery_date` is NOT a timestamp.
-
-    It is a double precision value representing a year number.
-
-    Do not use timestamp operations directly on delivery_date.
-
-22. UNIT AREA
-    `area` is stored as varchar.
-
-    Do not assume it is numeric without an explicit cast.
-
-23. SELLING TYPE
-    `selling_type` has:
-
-        primary
-        resale
-
-24. APPROVAL ENUMS
-    The following fields have:
-
-        pending
-        accepted
-        rejected
-
-    Fields:
-        franchise_owner_approval
-        sales_operation_approval
-        collection_approval
-
-25. COLLECTION STATUS
-    `collection_amount_status` has:
-
-        pending
-        half_collected
-        fully_collected
-
-26. COMMERCIAL DEALS
-    `is_commercial = true` means the deal is classified as commercial.
-
-    `is_commercial = false` means it is not commercial.
-
-27. CLIENT INFORMATION
-    Client information is available on deals through:
-
-        client_name
-        client_name_ar
-        national_id
-        national_id_address
-        birth_date
-        nationality
-        social_status
-        job_title
-        working_email
-        living_address
-        correspondence_address
-        country
-        city
-
-    Treat PII according to the database/security permissions.
-
-28. LEAD INFORMATION
-    Lead information can be accessed through:
-
-        deals.lead_id = leads.id
-
-    Do not invent lead columns.
-
-29. LEAD DEDUPLICATION
-    Leads can be duplicated.
-
-    When the user explicitly asks for unique demand/leads, consider:
-
-        merged_into_id IS NULL
-
-    according to the CRM deduplication rules.
-
-    Do not automatically deduplicate normal deal counts.
-
-30. MASKED MONEY / RESTRICTED COLUMNS
-
-    The underlying CRM database contains monetary fields that are
-    restricted from SQL access for this agent.
-
-    The agent may be aware that these fields exist conceptually, but
-    they are NOT usable SQL columns.
-
-    The following identifiers are STRICTLY FORBIDDEN in generated SQL:
-
-        unit_price
-        reservation_price
-        contract_price
-        collection_price
-        down_payment
-        total_retroactive_commission
-
-    NEVER reference these identifiers in any generated SQL.
-
-    This includes:
-
-        SELECT
-        WHERE
-        GROUP BY
-        ORDER BY
-        HAVING
-        JOIN
-        subqueries
-        CTEs
-        aggregate functions
-        expressions
-        aliases
-
-    For example, NEVER generate:
-
-        SELECT SUM(contract_price) FROM deals;
-
-        SELECT AVG(unit_price) FROM deals;
-
-        SELECT reservation_price FROM deals;
-
-    If the user asks for information that requires one of these
-    restricted fields, do NOT attempt to answer by generating SQL.
-
-    Do NOT substitute:
-
-        value
-        price
-        amount
-        currency
-
-    unless that column is explicitly present and permitted by the
-    catalogue.
-
-    Instead, return a concise statement that the requested information
-    cannot be retrieved through the available CRM data access.
-
-    IMPORTANT:
-
-    Knowing that a restricted column exists does NOT grant permission
-    to query it.
-31. MASKED LEAD MONEY
-    The following lead columns are masked and MUST NOT be generated:
-
-        budget_amount
-        cost_per_lead
-        ad_spend_amount
-
-32. MASKED / EXCLUDED FREE TEXT
-    `leads.last_activity_feedback` is intentionally excluded from this
-    catalogue because the source security/masking specification marks it
-    unavailable to the agent.
-
-33. SECURITY
-    The SQL agent only generates read-only SELECT queries.
-
-    Never generate:
-
-        INSERT
-        UPDATE
-        DELETE
-        DROP
-        ALTER
-        CREATE
-        TRUNCATE
-        MERGE
-        GRANT
-        REVOKE
-
-    Database permissions and row-level security are enforced outside
-    the SQL agent.
-
-34. NO SECURITY BYPASS
-    Never generate SQL intended to bypass:
-
-        PostgreSQL permissions
-        row-level security
-        application visibility rules
-        masked-column restrictions
-
-35. PRECISE PROJECTIONS
-    Prefer selecting only the columns required to answer the question.
-
-    Do not use SELECT * unless the user explicitly requests the complete
-    record.
-
-    When returning individual records rather than an aggregate, always
-    include an identifying column so the rows can be referred to:
-
-        deals   -> id, and unit_number where relevant
-        leads   -> id, name
-        users   -> id, name
-
-    A result of bare values with no identifier cannot be reported back
-    to the user usefully.
-
-36. AGGREGATIONS
-    Use PostgreSQL aggregation functions where appropriate:
-
-        COUNT
-        AVG
-        MIN
-        MAX
-        SUM
-
-    Only aggregate over columns actually available in the catalogue.
-
-37. CURRENCY
-    The deals schema provided to this agent does NOT expose a currency
-    column.
-
-    Do not invent one.
-
-38. NULL HANDLING
-    Use PostgreSQL NULL semantics correctly:
-
-        IS NULL
-        IS NOT NULL
-        COALESCE(...)
-
-    where appropriate.
-
-39. QUERY ACCURACY
-    Always use exact table and column names from the catalogue.
-
-    Never create a query merely because it looks plausible.
-
-    If the requested information cannot be obtained from the available
-    catalogue, do not fabricate a schema element.
-
-40. READ-ONLY DATABASE ACCESS
-    The database role used by the application should independently have
-    only the permissions required for read access.
-
-    SQL generation restrictions and database permissions are separate
-    security layers.
-41. DATABASE-SIDE ANALYSIS
-
-    Perform filtering, sorting, grouping, aggregation, ranking, and
-    result selection directly in SQL.
-
-    Do not expect the application model to retrieve a large set of
-    rows and perform database-style operations itself.
-
-    Examples:
-
-    "Top 5 deals by area"
-
-        SELECT id, unit_number, area
-        FROM deals
-        WHERE deleted_at IS NULL
-        ORDER BY CAST(area AS numeric) DESC
-        LIMIT 5
-
-    "Smallest 10 deals by area"
-
-        SELECT id, unit_number, area
-        FROM deals
-        WHERE deleted_at IS NULL
-        ORDER BY CAST(area AS numeric) ASC
-        LIMIT 10
-
-    NOTE: `area` is varchar (rule 22). Ordering it without CAST sorts
-    lexicographically, so '97' ranks above '446'. Always cast before
-    ordering or comparing it numerically.
-
-    "How many deals are in each status"
-
-        GROUP BY status
-
-    "Which deals are closing soon"
-
-        SELECT id, expected_closing_date
-        FROM deals
-        WHERE deleted_at IS NULL
-          AND expected_closing_date IS NOT NULL
-        ORDER BY expected_closing_date ASC
-
-    Use SQL aggregation for exact counts, averages, minimums, maximums,
-    and other aggregate questions.
-
-42. DEAL AGING / STALE DEALS
-
-    Deal aging must be calculated from actual date fields available
-    in the catalogue.
-
-    Do not invent a `days_in_stage` column.
-
-    If the requested aging concept can be derived from available
-    timestamps, calculate it in SQL.
-
-    If the required timestamp or business definition is not available
-    in the catalogue, do not invent one.
-
-43. RESULT SIZE
-
-    Use SQL filtering, ordering, aggregation, and LIMIT to minimize
-    the number of rows returned.
-
-    Prefer returning the exact rows needed for the user's request
-    rather than retrieving a large dataset for model-side processing.
-"""
+# Every rule set, for callers that do not narrow by table.
+ALL_RULES = build_rules()
 
 
 # ============================================================
@@ -1110,7 +794,7 @@ def render_tables(tables: Sequence[Table]) -> str:
 # CATALOGUE
 # ============================================================
 
-def get_deals_catalogue() -> dict[str, object]:
+def get_catalogue() -> dict[str, object]:
     """
     Return the safe CRM schema information exposed to the SQL agent.
 
@@ -1150,7 +834,7 @@ def get_deals_catalogue() -> dict[str, object]:
                 ],
             },
         },
-        "rules": DEALS_RULES,
+        "rules": ALL_RULES,
         "relationships": (
             DEALS_RELATIONSHIPS
             + LEADS_RELATIONSHIPS
@@ -1167,9 +851,13 @@ __all__ = [
     "DEALS_TABLE",
     "LEADS_TABLE",
     "USERS_TABLE",
-    "DEALS_RULES",
+    "ALL_RULES",
+    "relationships_for",
+    "render_enums",
+    "build_rules",
+    "GENERIC_RULES",
     "DEALS_RELATIONSHIPS",
     "LEADS_RELATIONSHIPS",
     "DEALS_ENUMS",
-    "get_deals_catalogue",
+    "get_catalogue",
 ]

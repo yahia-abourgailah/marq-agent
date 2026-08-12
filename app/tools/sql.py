@@ -9,7 +9,7 @@ from typing import Any
 
 from langchain_core.tools import tool
 
-from app.db.repositories.deals import DealsRepository
+from app.db.repositories.sql import SQLRepository
 from app.sql.agent import Refused, generate_sql
 from app.sql.guard import MAX_ROWS, SQLGuardError
 
@@ -64,7 +64,7 @@ class SQLTool:
     def __init__(
         self,
         sql_agent: Any,
-        repository: DealsRepository,
+        repository: SQLRepository,
     ) -> None:
         self.sql_agent = sql_agent
         self.repository = repository
@@ -165,7 +165,7 @@ class SQLTool:
 
 def build_sql_tool(
     sql_agent: Any,
-    repository: DealsRepository,
+    repository: SQLRepository,
 ):
     """
     Build the global SQL LangChain tool with injected dependencies.

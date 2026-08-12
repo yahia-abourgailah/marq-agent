@@ -39,27 +39,61 @@ cp .env.development.example .env.development
 ```
 app/
   config.py            settings, loaded from the APP_ENV-selected env file
-  llm/                 chat model client (OpenAI-compatible, points at vLLM)
+  llm/model.py         chat model client (OpenAI-compatible, points at vLLM)
   db/
     connection.py      async connection pooling
-    repositories/      read-only gateways; every query passes SQLGuard
+    repositories/
+      sql.py           SQLRepository — the only path to the database,
+                       and it always validates through SQLGuard first
   sql/
-    catalogue.py       the schema contract shown to the SQL Agent
-    agent.py           natural language -> one read-only SELECT
-    guard.py           query-safety validation
+    catalogue.py       the schema contract: tables, rules, relationships
+    agent.py           SQL Agent — natural language -> one SELECT, or a refusal
+    guard.py           SQLGuard — query-safety validation
     executor.py        runs validated SQL
   tools/
-    sql.py             the `sql_query` tool — the only path to CRM data
-    deals.py           scalar analysis tools (no data retrieval)
+    sql.py             the `sql_query` tool — an agent's only path to CRM data
+    analysis.py        arithmetic helpers; no database access, no domain
   graph/
-    agents/            conversational agents
-    builder.py         wiring
+    agents/
+      domain.py        Domain definitions + the generic agent builder
+      deals.py         the Deals Agent's system prompt
+    builder.py         graph assembly
+    state.py           conversation state
+evals/                 behavioural cases for the SQL Agent
 scripts/               developer utilities, not imported by the app
 tests/
 ```
 
 `app/api/`, `app/auth/`, `app/graph/supervisor.py` and `app/graph/agents/leads.py`
 are placeholders for work in progress.
+
+### Adding another agent
+
+A `Domain` binds the four things that have to agree — the tables its SQL
+Agent is shown, the tables its guard permits, the rules and relationships in
+its prompt, and its own system prompt. `build_domain_agent()` derives the
+whole stack from it, so the guard can never permit a table the prompt never
+described.
+
+Adding the Leads Agent means declaring one and registering it in `DOMAINS`:
+
+```python
+LEADS = Domain(
+    name="leads",
+    tables=(LEADS_TABLE, USERS_TABLE),
+    system_prompt=LEADS_AGENT_SYSTEM_PROMPT,
+)
+```
+
+No changes to the guard, the SQL Agent, the repository or the tool. The
+business rules are already split per table in `catalogue.py`
+(`GENERIC_RULES`, `DEALS_RULES_ONLY`, `LEADS_RULES_ONLY`, `USERS_RULES_ONLY`)
+and `build_rules()` composes only the ones for the tables in scope.
+
+The supervisor then routes between the registered domains — that is the one
+piece `Domain` does not yet cover, because routing state belongs in
+`AgentState` and is better designed against a real second agent than
+speculatively.
 
 ## Running the tests
 

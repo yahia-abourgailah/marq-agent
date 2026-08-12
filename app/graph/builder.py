@@ -8,20 +8,10 @@ from langchain_core.messages import AIMessage
 from langgraph.errors import GraphRecursionError
 from langgraph.graph import StateGraph
 
-from app.db.connection import app_db
-
-# [claude] Was `from app.db.repositories.deals import deals`, which raised
-# ImportError at import time — the module exports the class, not a `deals`
-# symbol. Nothing imported the graph, so this never surfaced.
-from app.db.repositories.deals import DealsRepository
-from app.graph.agents.deals import build_deals_agent
+from app.graph.agents.domain import DEALS, build_domain_agent
 from app.graph.checkpointer import build_checkpointer
 from app.graph.state import AgentState
 from app.llm.model import get_model
-from app.sql.agent import build_sql_agent
-from app.sql.executor import SQLExecutor
-from app.sql.guard import SQLGuard
-from app.tools.sql import build_sql_tool
 
 # [claude] Was an inline `10` in the node. A ReAct loop spends two steps per
 # tool call, so 10 allowed roughly four calls — enough for one sql_query plus
@@ -43,65 +33,41 @@ def build_graph(checkpointer=None):
     Architecture:
 
         Graph
-          ↓
-        Deals Agent
-          ↓
-        ┌───────────────────────┐
-        │                       │
-     sql_query             Deals Tools
-        │                       │
-        ↓                       │
-     SQL Agent                  │
-        ↓                       │
-     SQL Guard                  │
-        ↓                       │
-     SQL Executor               │
-        ↓                       │
-     PostgreSQL                 │
-        │                       │
-        └───────────┬───────────┘
-                    ↓
-               Final Answer
+          |
+        Deals Agent  (one Domain: tables + prompt + tools)
+          |
+        +--------------------+
+        |                    |
+     sql_query          analysis tools
+        |                    |
+     SQL Agent               | arithmetic only,
+        |                    | no database access
+     SQL Guard               |
+        |                    |
+     SQL Executor            |
+        |                    |
+     PostgreSQL              |
+        |                    |
+        +---------+----------+
+                  |
+             Final Answer
+
+    A second domain agent is another build_domain_agent() call and another
+    node; see app/graph/agents/domain.py.
     """
 
     # ---------------------------------------------------------
-    # Shared model
+    # Agents
     # ---------------------------------------------------------
+    #
+    # [claude] The SQL agent, guard, repository and tool wiring moved into
+    # build_domain_agent(), which derives all of it from the Domain. It used
+    # to be spelled out here, which meant a second agent would have to
+    # duplicate it — and would silently share the guard's global allowlist.
 
     model = get_model()
 
-    # ---------------------------------------------------------
-    # SQL / database layer
-    # ---------------------------------------------------------
-
-    sql_agent = build_sql_agent(model)
-
-    executor = SQLExecutor(
-        database=app_db,
-    )
-
-    guard = SQLGuard()
-
-    # [claude] Was `deals.DealsRepository(...)` — see the import note above.
-    repository = DealsRepository(
-        executor=executor,
-        guard=guard,
-    )
-
-    # This returns the LangChain `sql_query` tool.
-    sql_tool = build_sql_tool(
-        sql_agent=sql_agent,
-        repository=repository,
-    )
-
-    # ---------------------------------------------------------
-    # Deals Agent
-    # ---------------------------------------------------------
-
-    deals_agent = build_deals_agent(
-        sql_tool=sql_tool,
-        model=model,
-    )
+    deals_agent = build_domain_agent(DEALS, model=model)
 
     # ---------------------------------------------------------
     # LangGraph

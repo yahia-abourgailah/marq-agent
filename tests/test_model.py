@@ -46,23 +46,33 @@ def test_timeout_and_retries_are_set():
 @pytest.mark.asyncio
 async def test_sql_generation_is_reproducible():
     """
-    The behaviour temperature=0 buys us: the same question must produce the
-    same query. Previously this could differ between runs, which meant a
-    failing prompt test could not be told apart from an unlucky sample.
+    The behaviour temperature=0 buys us: the same question produces the same
+    query, so a failing prompt test is a regression rather than an unlucky
+    sample.
+
+    [claude] Compared as normalised SQL rather than raw strings. temperature=0
+    makes decoding greedy, but the vLLM endpoint is shared and batched
+    inference is not bitwise deterministic — results can vary slightly with
+    batch composition. Normalising through sqlglot absorbs formatting jitter
+    while still catching a genuinely different query.
     """
+
+    import sqlglot
 
     from app.sql.agent import Sql, build_sql_agent, generate_sql
 
     agent = build_sql_agent(get_model())
     question = "How many contracted deals do we have?"
 
-    results = []
+    normalised = set()
     for _ in range(3):
         result = await generate_sql(agent=agent, question=question)
         assert isinstance(result, Sql), f"expected SQL, got {result!r}"
-        results.append(result.query)
+        normalised.add(
+            sqlglot.parse_one(result.query, read="postgres").sql(dialect="postgres")
+        )
 
-    assert len(set(results)) == 1, (
+    assert len(normalised) == 1, (
         "SQL generation is not reproducible across runs:\n"
-        + "\n".join(f"  {r}" for r in sorted(set(results)))
+        + "\n".join(f"  {q}" for q in sorted(normalised))
     )

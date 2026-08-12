@@ -1,8 +1,8 @@
-from app.sql.catalogue import get_deals_catalogue
+from app.sql.catalogue import get_catalogue
 
 
 def test_deals_catalogue():
-    catalogue = get_deals_catalogue()
+    catalogue = get_catalogue()
 
     assert "deals" in catalogue["tables"]
 

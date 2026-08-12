@@ -1,4 +1,4 @@
-from app.tools.deals import (
+from app.tools.analysis import (
     calculate_average,
     calculate_difference,
     calculate_percentage,

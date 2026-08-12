@@ -168,7 +168,7 @@ def compare_periods(
     }
 
 
-DEALS_TOOLS = [
+ANALYSIS_TOOLS = [
     calculate_percentage,
     calculate_percentage_change,
     calculate_average,
@@ -183,5 +183,5 @@ __all__ = [
     "calculate_average",
     "calculate_difference",
     "compare_periods",
-    "DEALS_TOOLS",
+    "ANALYSIS_TOOLS",
 ]

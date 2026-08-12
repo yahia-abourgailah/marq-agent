@@ -10,7 +10,19 @@ pythonpath = ["."]
 
 # The suite uses explicit @pytest.mark.asyncio markers.
 asyncio_mode = "strict"
-asyncio_default_fixture_loop_scope = "function"
+
+# [claude] One event loop for the whole session.
+#
+# `app_db` is a module-level singleton whose pool opens lazily on first use,
+# binding its internal futures to whichever loop got there first. With a loop
+# per test, the next async test to touch the database failed with
+# "The future belongs to a different loop". A shared loop keeps the pool
+# valid across tests.
+#
+# The real fix is injecting the database rather than importing a singleton;
+# this keeps the suite honest until then.
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
 
 markers = [
     "integration: needs a live model endpoint and/or a live database",

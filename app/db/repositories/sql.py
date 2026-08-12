@@ -13,7 +13,7 @@ from app.sql.executor import SQLExecutor
 from app.sql.guard import SQLGuard
 
 
-class DealsRepository:
+class SQLRepository:
     """Read-only database gateway for the Deals domain."""
 
     def __init__(
@@ -39,4 +39,4 @@ class DealsRepository:
         )
 
 
-__all__ = ["DealsRepository"]
+__all__ = ["SQLRepository"]

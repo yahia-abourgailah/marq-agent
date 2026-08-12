@@ -1,7 +1,7 @@
 import pytest
 
 from app.db.connection import app_db
-from app.db.repositories.deals import DealsRepository
+from app.db.repositories.sql import SQLRepository
 from app.llm.model import get_model
 from app.sql.agent import Sql, build_sql_agent, generate_sql
 from app.sql.executor import SQLExecutor
@@ -39,7 +39,7 @@ async def test_real_sql_pipeline():
 
     guard = SQLGuard()
 
-    repository = DealsRepository(
+    repository = SQLRepository(
         executor=executor,
         guard=guard,
     )
