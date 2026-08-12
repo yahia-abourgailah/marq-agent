@@ -3,10 +3,16 @@ import pytest
 from app.db.connection import app_db
 from app.db.repositories.deals import DealsRepository
 from app.llm.model import get_model
-from app.sql.agent import build_sql_agent, generate_sql
+from app.sql.agent import Sql, build_sql_agent, generate_sql
 from app.sql.executor import SQLExecutor
 from app.sql.guard import SQLGuard
 from app.tools.sql import SQLTool
+
+# [claude] Marked as integration: this module runs the whole pipeline
+# against a live model endpoint and PostgreSQL.
+# Excluded from the default run (see pyproject.toml); use
+#     pytest -m integration
+pytestmark = pytest.mark.integration
 
 
 @pytest.mark.asyncio
@@ -21,6 +27,8 @@ async def test_real_sql_pipeline():
         agent=sql_agent,
         question=question,
     )
+    assert isinstance(generated_sql, Sql), f"expected SQL, got {generated_sql!r}"
+    generated_sql = generated_sql.query
 
     print("\nGenerated SQL:")
     print(generated_sql)

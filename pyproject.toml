@@ -1,0 +1,46 @@
+# [claude] Added. The project had no tooling configuration at all, so pytest
+# behaviour, async mode and line length were whatever each contributor's
+# machine defaulted to. Dependencies stay in requirements.txt; this file
+# carries tool configuration only, so nothing about how the app is installed
+# or run changes.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+# The suite uses explicit @pytest.mark.asyncio markers.
+asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "function"
+
+markers = [
+    "integration: needs a live model endpoint and/or a live database",
+]
+
+# [claude] Integration tests are excluded by default.
+#
+# Four test modules call get_model() or app_db.connect() and therefore need
+# the vLLM endpoint and Postgres to be up. They were indistinguishable from
+# unit tests, so a green run proved nothing about which parts were actually
+# exercised, and the suite could not run in CI.
+#
+#   pytest                    unit tests only, hermetic
+#   pytest -m integration     the live ones
+#   pytest -m ""              everything
+addopts = "-m 'not integration'"
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+extend-exclude = ["tests/fixtures"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle
+    "F",   # pyflakes
+    "I",   # import sorting
+    "UP",  # pyupgrade
+    "B",   # bugbear
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]

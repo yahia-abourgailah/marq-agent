@@ -228,3 +228,6 @@ node_modules/
 .DS_Store
 .idea/
 .vscode/
+
+# [claude] LangGraph API server local state (created by `langgraph dev`)
+.langgraph_api/

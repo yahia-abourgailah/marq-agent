@@ -1,18 +1,47 @@
-fastapi>=0.115
-uvicorn[standard]>=0.32
+# [claude] Reorganised. Changes:
+#   - langchain / langchain-openai were unpinned, and the langchain-core and
+#     langgraph floors (0.3.20 / 0.2.50) predated the 1.x APIs this code uses.
+#     `from langchain.agents import create_agent` needs langchain >= 1.0, so a
+#     resolver was free to install an incompatible set.
+#   - sqlglot floor raised: SQLGuard's allowlist depends on sqlglot's canonical
+#     function names, which are not stable across major versions.
+#   - langchain-anthropic dropped — nothing imports it, and the stack talks to
+#     vLLM through the OpenAI-compatible client.
+#   - typing-extensions added; app/graph/state.py imports it directly.
+#   - packages that are installed for planned work are grouped and labelled,
+#     rather than sitting alongside ones the code actually uses.
+
+# --- Agent / LLM ---------------------------------------------------------
+langchain>=1.0
+langchain-core>=1.0
+langchain-openai>=1.0
+langgraph>=1.0
+langgraph-checkpoint-postgres>=3.0
+
+# --- SQL / database ------------------------------------------------------
+psycopg[binary,pool]>=3.2
+sqlglot>=30.0
+
+# --- Configuration -------------------------------------------------------
 pydantic>=2.9
 pydantic-settings>=2.6
 python-dotenv>=1.0
-langgraph>=0.2.50
-langchain-core>=0.3.20
-langchain-anthropic>=0.3.0
-psycopg[binary,pool]>=3.2
-langgraph-checkpoint-postgres>=2.0.0
+typing-extensions>=4.12
+
+# --- Testing / local development -----------------------------------------
 pytest>=8.3
-pytest-asyncio>=0.24
+pytest-asyncio>=1.0
+ruff>=0.6
+# [claude] Runs the local LangGraph API server that LangGraph Studio connects
+# to: `langgraph dev`. The [inmem] extra is the in-memory runtime, which is
+# what makes the no-Docker local server work.
+langgraph-cli[inmem]>=0.4
+
+# --- Not yet imported by any module; kept for planned work ---------------
+# HTTP API layer (app/api/ is still empty)
+fastapi>=0.115
+uvicorn[standard]>=0.32
 httpx>=0.27
-langchain-openai
+# Caching and vector search (no retrieval code on this branch yet)
 redis>=5.0
 qdrant-client>=1.12
-langchain
-sqlglot>=27.0

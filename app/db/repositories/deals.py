@@ -1,3 +1,10 @@
+"""
+Read-only database gateway for the Deals domain.
+
+Every query reaches PostgreSQL through here, and every query is validated by
+SQLGuard on the way — there is no bypass.
+"""
+
 from __future__ import annotations
 
 from typing import Any

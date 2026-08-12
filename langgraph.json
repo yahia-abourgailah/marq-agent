@@ -1,0 +1,17 @@
+{
+  "_comment": [
+    "[claude] LangGraph API server config. `langgraph dev` reads this, and",
+    "LangGraph Studio connects to that server.",
+    "",
+    "The graph points at build_studio_graph rather than app/graph/graph.py:graph",
+    "because the server supplies its own persistence — a checkpointer compiled",
+    "into the graph competes with it.",
+    "",
+    "`env` selects the environment file. Change it if APP_ENV is not development."
+  ],
+  "dependencies": ["."],
+  "graphs": {
+    "deals_agent": "./app/graph/builder.py:build_studio_graph"
+  },
+  "env": ".env.development"
+}
