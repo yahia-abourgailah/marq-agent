@@ -3,7 +3,12 @@
     "[claude] LangGraph API server config. `langgraph dev` reads this, and",
     "LangGraph Studio connects to that server.",
     "",
-    "The graph points at build_studio_graph rather than app/graph/graph.py:graph",
+    "`marq_agent` is the one to use: it routes each question to the domain",
+    "specialist that owns it. The two domain graphs are exposed alongside it",
+    "so a single agent can be exercised in isolation when debugging — pick",
+    "the assistant from Studio's dropdown.",
+    "",
+    "These point at build_*_studio_graph rather than app/graph/graph.py:graph",
     "because the server supplies its own persistence — a checkpointer compiled",
     "into the graph competes with it.",
     "",
@@ -11,7 +16,9 @@
   ],
   "dependencies": ["."],
   "graphs": {
-    "deals_agent": "./app/graph/builder.py:build_studio_graph"
+    "marq_agent": "./app/graph/builder.py:build_supervisor_studio_graph",
+    "deals_agent": "./app/graph/builder.py:build_studio_graph",
+    "leads_agent": "./app/graph/builder.py:build_leads_studio_graph"
   },
   "env": ".env.development"
 }

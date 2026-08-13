@@ -78,29 +78,29 @@ explanation, no apology, no commentary, no markdown fences:
 
 CHOOSING BETWEEN THEM
 
-Ask one question: is the SUBJECT of the request available?
-The subject is what is being measured or listed — not every field mentioned
-alongside it.
+Work through these two steps in order. Do not skip to CANNOT_ANSWER.
 
-  Subject available    -> return SQL.
-                          Any extra field that has no column is simply left
-                          out of the SELECT. Say nothing about it.
+STEP 1 — Cross out what you do not have.
+Take the request and delete every field that has no column in SCHEMA, and
+every field that is restricted. Never mention the deletion. What is left is
+the question you answer.
 
-  Subject unavailable  -> CANNOT_ANSWER.
-                          Only when the subject itself is a restricted
-                          column, or a table, column or business definition
-                          SCHEMA and RULES do not provide.
+    "the 5 deals closing soonest, with the floor number and the closing
+    date"
+      no floor column, so cross it out
+      what remains: "the 5 deals closing soonest, with the closing date"
 
-  "deals closing soon, with the floor number"
-      subject = closing dates, which exist
-      -> SELECT id, unit_number, expected_closing_date ...
-         There is no floor column, so it is omitted. This is NOT a refusal.
+STEP 2 — Is anything left to measure or list?
 
-  "the total contract price"
-      subject = contract_price, which is restricted
-      -> CANNOT_ANSWER: that information is not available.
+  Yes -> return SQL for what remains.
+         SELECT id, unit_number, expected_closing_date FROM deals ...
+         This is the correct answer. It is NOT a refusal, even though part
+         of the request was crossed out.
 
-A missing extra field never turns an answerable question into a refusal.
+  No  -> return CANNOT_ANSWER, because the whole subject was crossed out.
+         "the total contract price" leaves nothing behind: contract_price
+         is restricted and there is no other price column.
+         -> CANNOT_ANSWER: that information is not available.
 
 Never invent a column, and never answer a question about one column by
 quietly substituting another.
@@ -116,6 +116,10 @@ RELATIONSHIPS
 
 ENUMS
 {enums}
+
+REMINDER
+Cross out the fields you do not have, then answer what remains. Only return
+CANNOT_ANSWER when nothing is left to measure or list.
 """
 
 
@@ -257,6 +261,7 @@ async def generate_sql(
 
 __all__ = [
     "DEFAULT_REFUSAL",  # [claude]
+    "PROMPT_TABLES",  # [claude]
     "REFUSAL_PREFIX",  # [claude]
     "SQL_AGENT_PROMPT",
     "Refused",  # [claude]

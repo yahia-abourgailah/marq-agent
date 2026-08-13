@@ -53,10 +53,13 @@ app/
   tools/
     sql.py             the `sql_query` tool — an agent's only path to CRM data
     analysis.py        arithmetic helpers; no database access, no domain
+    leads.py           funnel analysis; numbers only, no database access
   graph/
     agents/
       domain.py        Domain definitions + the generic agent builder
       deals.py         the Deals Agent's system prompt
+      leads.py         the Leads Agent's system prompt
+    supervisor.py      routing: which specialist owns this question
     builder.py         graph assembly
     state.py           conversation state
 evals/                 behavioural cases for the SQL Agent
@@ -64,8 +67,40 @@ scripts/               developer utilities, not imported by the app
 tests/
 ```
 
-`app/api/`, `app/auth/`, `app/graph/supervisor.py` and `app/graph/agents/leads.py`
-are placeholders for work in progress.
+`app/api/` and `app/auth/` are placeholders for work in progress.
+
+### Agents
+
+| Agent | Tables | Answers |
+|---|---|---|
+| `deals_agent` | deals, leads, users | Pipeline, status, closings, owners, unit inventory |
+| `leads_agent` | leads, users | Demand, sources, stages, SLA, qualification, conversion |
+
+Each agent's guard permits exactly the tables its prompt describes, so the
+Leads Agent rejects a query against `deals` rather than answering it.
+
+### The supervisor
+
+`marq_agent` routes each question to the specialist that owns it, with one
+classification call before any agent runs:
+
+```
+START -> supervisor -+-> deals_agent -> END
+                     +-> leads_agent -> END
+                     +-> out_of_scope -> END   (direct reply, no query)
+```
+
+The domains are not symmetric, and that decides most routes. DEALS sees
+deals, leads and users; LEADS sees leads and users. So a question spanning
+both — "which lead sources produce the most contracted deals" — goes to
+DEALS, the only agent that can join them. An unparseable classification falls
+back to DEALS for the same reason: a misroute there can still be answered.
+
+The chosen route is written to `AgentState.route`, so a wrong answer caused
+by a misroute is visible in the trace rather than having to be inferred.
+
+Routing is asserted by `evals/routing_cases.py` — a misroute is quiet, since
+the wrong specialist declines politely rather than erroring.
 
 ### Adding another agent
 
@@ -90,10 +125,11 @@ business rules are already split per table in `catalogue.py`
 (`GENERIC_RULES`, `DEALS_RULES_ONLY`, `LEADS_RULES_ONLY`, `USERS_RULES_ONLY`)
 and `build_rules()` composes only the ones for the tables in scope.
 
-The supervisor then routes between the registered domains — that is the one
-piece `Domain` does not yet cover, because routing state belongs in
-`AgentState` and is better designed against a real second agent than
-speculatively.
+The supervisor picks up new domains automatically: `build_supervisor_graph()`
+adds a node and a branch for every entry in `DOMAINS`. The one thing that is
+not automatic is the supervisor prompt, which has to learn the new category
+so the classifier knows when to choose it — add a case to
+`evals/routing_cases.py` at the same time.
 
 ## Running the tests
 
@@ -120,20 +156,35 @@ Studio talks to a local LangGraph API server. Start it:
 langgraph dev
 ```
 
-That reads `langgraph.json`, serves the graph as assistant `deals_agent` on
-`http://127.0.0.1:2024`, and opens Studio in the browser. Add `--no-browser`
-to skip that.
+That reads `langgraph.json`, serves three assistants on
+`http://127.0.0.1:2024`, and opens Studio in the browser. Use `marq_agent` —
+it routes to the right specialist. `deals_agent` and `leads_agent` are
+exposed alongside it for debugging one agent in isolation. Add `--no-browser`
+to skip opening it.
 
 Prerequisites: PostgreSQL running with the fixture loaded (see Scripts below),
 and `MODEL_BASE_URL` / `MODEL_API_KEY` reachable in `.env.development`.
 
 Things worth asking it:
 
+Deals Agent:
+
 - `How many active deals do we have?` — one `sql_query` call
 - `How many contracted deals, and what percentage of active deals is that?` —
   chains `sql_query` into `calculate_percentage`
 - `Show me the top 5 deals by area` — exercises the varchar cast
 - `What is the total contract price?` — should decline; the column is masked
+
+Leads Agent:
+
+- `How many unique leads do we have?` — deduplicates on `merged_into_id`
+- `How many leads are in each stage?` — groups by id; stage names are not
+  available and it should say so rather than invent them
+- `What share of our leads comes from each utm source?` — chains into
+  `calculate_share`
+- `Show me the funnel for stages 4, then 7, then 12` — `calculate_funnel`
+- `How many contracted deals do we have?` — should decline; deals are outside
+  this agent's domain
 
 You can also drive it without the UI:
 
@@ -175,6 +226,12 @@ Inspect the column types it resolves without writing anything:
 
 ```bash
 python scripts/generate_fixture.py --report
+```
+
+Summarise row counts and distributions:
+
+```bash
+python scripts/generate_fixture.py --stats
 ```
 
 Check that the configured database is reachable:

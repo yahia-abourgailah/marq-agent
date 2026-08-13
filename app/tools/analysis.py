@@ -168,12 +168,72 @@ def compare_periods(
     }
 
 
+@tool
+def calculate_share(
+    counts: dict[str, float],
+) -> dict[str, Any]:
+    """
+    Split mutually exclusive bucket counts into each bucket's share of their
+    combined total.
+
+    Use this ONLY for buckets that do not overlap and together make up the
+    whole — the output of a GROUP BY, such as leads by utm_source or deals by
+    status. The total is computed by summing the counts you pass in.
+
+    Do NOT use it when one number is a subset of another. "225 contracted out
+    of 245 active" is not two buckets: contracted deals are part of the active
+    deals, so summing them gives 470, which is meaningless. Use
+    calculate_percentage(part=225, total=245) for that.
+
+        buckets     {"eoi": 15, "reservation": 5, "contracted": 225}   yes
+        subset      {"contracted": 225, "total_active": 245}           no
+
+    Operates only on values supplied by the agent.
+    Does not retrieve CRM data.
+    """
+
+    if not counts:
+        return {
+            "success": False,
+            "error": "Cannot calculate shares from an empty set of counts.",
+        }
+
+    total = sum(counts.values())
+
+    if total == 0:
+        return {
+            "success": False,
+            "error": "Cannot calculate shares when the total is zero.",
+        }
+
+    shares = {
+        bucket: {
+            "count": value,
+            "share_percent": round((value / total) * 100, 2),
+        }
+        for bucket, value in counts.items()
+    }
+
+    return {
+        "success": True,
+        "total": total,
+        "shares": dict(
+            sorted(
+                shares.items(),
+                key=lambda item: item[1]["count"],
+                reverse=True,
+            )
+        ),
+    }
+
+
 ANALYSIS_TOOLS = [
     calculate_percentage,
     calculate_percentage_change,
     calculate_average,
     calculate_difference,
     compare_periods,
+    calculate_share,  # [claude]
 ]
 
 
@@ -183,5 +243,6 @@ __all__ = [
     "calculate_average",
     "calculate_difference",
     "compare_periods",
+    "calculate_share",  # [claude]
     "ANALYSIS_TOOLS",
 ]

@@ -424,9 +424,19 @@ def _function_name(
         # column reaches no data the query could not already read.
         #
         # CASE parses into two node types, so both are listed.
+        #
+        # EXISTS is a subquery predicate, not a callable function. Blocking
+        # it broke the lead-to-deal conversion metric: the SQL Agent wrote
+        # the correct `COUNT(*) FILTER (WHERE EXISTS (...))`, the guard
+        # rejected it, and the Deals Agent fell back to dividing two raw
+        # counts — reporting 35.63% where the real figure is 31.67%. A guard
+        # rejection that pushes an agent onto a wrong answer is worse than
+        # the query it blocked. The tables inside the subquery are still
+        # checked against the allowlist.
         "cast",
         "case",
         "if",
+        "exists",
         "and",
         "or",
         "not",

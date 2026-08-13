@@ -22,6 +22,8 @@ from dataclasses import dataclass, field
 class Case:
     name: str
     question: str
+    # Which domain's SQL Agent to run the case against.
+    domain: str = "deals"
     # Lowercased substrings that must all appear in the generated SQL.
     must_contain: tuple[str, ...] = ()
     # Lowercased substrings that must not appear.
@@ -164,6 +166,53 @@ CASES: tuple[Case, ...] = (
         why="Deal rows need id plus the human label so they can be looked up.",
         tags=("shape",),
     ),
+    # ---- metrics the catalogue defines --------------------------------
+    Case(
+        name="conversion_counts_leads_not_deals",
+        question="What is our overall lead-to-deal conversion rate?",
+        must_contain=("exists", "leads"),
+        must_not_contain=("count(*) from deals",),
+        why=(
+            "Conversion counts leads that produced a deal. Dividing total "
+            "deals by total leads double-counts any lead with several deals."
+        ),
+        tags=("metrics",),
+    ),
+    Case(
+        name="rate_keeps_its_denominator",
+        question="What is the contract rate for commercial deals?",
+        must_contain=("filter", "is_commercial"),
+        must_not_contain=("and status = 'contracted'", "and status='contracted'"),
+        why=(
+            "Putting the measured condition in the WHERE shrinks the "
+            "denominator to match the numerator, so the rate is always 100%. "
+            "It belongs in a FILTER over the whole population."
+        ),
+        tags=("metrics",),
+    ),
+    Case(
+        name="group_comparison_is_one_query",
+        question=(
+            "Are commercial deals more likely to be contracted than "
+            "non-commercial ones?"
+        ),
+        must_contain=("group by", "is_commercial", "filter"),
+        why=(
+            "One grouped query returns both rates and cannot disagree with "
+            "itself; two separate queries can each be wrong independently."
+        ),
+        tags=("metrics",),
+    ),
+    Case(
+        name="grouped_query_selects_its_key",
+        question="What is our lead-to-deal conversion rate by franchise?",
+        must_contain=("franchise_id", "group by"),
+        why=(
+            "Grouping by franchise_id without selecting it returns anonymous "
+            "percentages with no way to tell which franchise each belongs to."
+        ),
+        tags=("shape",),
+    ),
     # ---- query shape -------------------------------------------------
     Case(
         name="soft_delete_filter",
@@ -189,4 +238,111 @@ CASES: tuple[Case, ...] = (
 )
 
 
-__all__ = ["CASES", "Case"]
+# ============================================================
+# [claude] Leads domain.
+#
+# Run against the Leads Agent's SQL Agent, which sees leads and users only.
+# Its guard rejects `deals`, so a case that reaches for deals data must come
+# back as a refusal rather than a query.
+# ============================================================
+
+LEADS_CASES: tuple[Case, ...] = (
+    Case(
+        name="leads_unique_deduplicates",
+        domain="leads",
+        question="How many unique leads do we have?",
+        must_contain=("merged_into_id",),
+        why="Leads duplicate; unique demand filters merged_into_id IS NULL.",
+        tags=("leads",),
+    ),
+    Case(
+        name="leads_by_stage_groups_by_id",
+        domain="leads",
+        question="How many leads are in each stage?",
+        must_contain=("lead_stage_id", "group by"),
+        why=(
+            "The stage lookup table is unavailable, but grouping by the id "
+            "is still the right answer — it must not refuse outright."
+        ),
+        tags=("leads",),
+    ),
+    Case(
+        name="leads_named_stage_cannot_resolve",
+        domain="leads",
+        question="How many leads are in the Hot Case stage?",
+        expect_refusal=True,
+        why=(
+            "Stage names cannot be mapped to ids without the lookup table. "
+            "Guessing an id would produce a confident wrong number."
+        ),
+        tags=("leads", "refusal"),
+    ),
+    Case(
+        name="leads_stale_uses_precomputed_flag",
+        domain="leads",
+        question="How many stale leads do we have?",
+        must_contain=("is_stale",),
+        why="is_stale is already computed; staleness is not re-derived.",
+        tags=("leads",),
+    ),
+    Case(
+        name="leads_sla_breaches",
+        domain="leads",
+        question="How many leads breached their SLA?",
+        must_contain=("sla_breach_at",),
+        why="sla_breach_at is non-NULL only when the SLA was breached.",
+        tags=("leads",),
+    ),
+    Case(
+        name="leads_by_utm_source_can_use_names",
+        domain="leads",
+        question="Which utm sources bring the most leads?",
+        must_contain=("utm_source", "group by"),
+        why="utm_source is real text, unlike the id-only lookups.",
+        tags=("leads",),
+    ),
+    Case(
+        name="leads_conversion_uses_converted_at",
+        domain="leads",
+        question="How many leads have converted?",
+        must_contain=("converted",),
+        why="Conversion is recorded on the lead, not by joining deals.",
+        tags=("leads",),
+    ),
+    Case(
+        name="leads_outcome_reason_is_all_null",
+        domain="leads",
+        question="What are the top loss reasons for our leads?",
+        must_not_contain=("outcome_reason_id",),
+        why=(
+            "outcome_reason_id is NULL for every row; loss_reason_category "
+            "is the populated column."
+        ),
+        tags=("leads",),
+    ),
+    Case(
+        name="leads_agent_cannot_reach_deals",
+        domain="leads",
+        question="How many contracted deals do we have?",
+        expect_refusal=True,
+        why=(
+            "The Leads domain does not include deals. Its guard would reject "
+            "the query, so the agent must decline rather than write it."
+        ),
+        tags=("leads", "refusal", "isolation"),
+    ),
+    Case(
+        name="leads_response_time_is_precomputed",
+        domain="leads",
+        question="What is the average response time for leads?",
+        must_contain=("response_time_minutes", "avg("),
+        why="response_time_minutes is already computed from first_response_at.",
+        tags=("leads",),
+    ),
+)
+
+
+CASES = CASES + LEADS_CASES
+
+
+__all__ = ["CASES", "LEADS_CASES", "Case"]

@@ -568,6 +568,30 @@ GENERIC_RULES = """\
   returning individual records must include `id`, plus the human label for
   that table (`unit_number` for deals, `name` for leads and users).
 
+- Aggregates and rates.
+
+  A rate is a condition counted over a population. The condition belongs in
+  a FILTER and the population in the WHERE. Putting the condition in the
+  WHERE shrinks the denominator to match the numerator, and every rate comes
+  out as 100%:
+
+      SELECT count(*) FILTER (WHERE status = 'contracted') * 1.0 / count(*)
+                 AS contracted_rate
+      FROM deals
+      WHERE deleted_at IS NULL AND is_commercial
+
+  The same trap applies to a breakdown: never filter by the column you are
+  grouping by, or the total contradicts the split beneath it.
+
+  Answer a comparison between groups with one query grouped by that column,
+  not one query per group — a single query cannot disagree with itself. And
+  always SELECT the column you GROUP BY, or the rows come back unlabelled.
+
+  Alias every aggregate for what one row holds, including its unit:
+  `AVG(response_time_minutes) AS avg_response_time_minutes`, and in a
+  grouped query `count(*) AS deals_in_status` rather than `live_deal_count`.
+  An alias that overstates its row is worse than none.
+
 - These columns are restricted and must never appear in generated SQL, in
   any clause, subquery, CTE or alias:
       unit_price, reservation_price, contract_price, collection_price,
@@ -612,9 +636,33 @@ DEALS_RULES_ONLY = """\
   lead can have many deals. `deal_lead_source_id` holds a `leads.id` despite
   its name — never join it to a source table.
 
+- Lead-to-deal conversion means: of the leads in scope, how many produced at
+  least one deal. Count leads, not deals — a lead with three deals would
+  otherwise inflate the numerator. Both tables need their soft-delete filter:
+
+      SELECT COUNT(*) FILTER (WHERE EXISTS (
+                 SELECT 1 FROM deals d
+                 WHERE d.lead_id = leads.id AND d.deleted_at IS NULL
+             )) * 1.0 / COUNT(*) AS conversion_rate
+      FROM leads
+      WHERE leads.deleted_at IS NULL
+
+  Add `GROUP BY leads.franchise_id` (or lead_source_id, agent_id) to break it
+  down; the `WHERE leads.deleted_at IS NULL` stays in every variant.
+
+  This is a different measure from `leads.converted_at`, which is the CRM's
+  own conversion flag and does not require a deal to exist.
+
 - `owner_id`, `agent_id`, `creator_id` and `team_leader_id` all reference
   `users.id`. Resolve person names by joining users and filtering
   `users.name`.
+
+- `franchise_id`, `project_id`, `developer_id`, `location_id`,
+  `unit_type_id` and `finishing_type_id` are ids whose lookup tables are not
+  in SCHEMA. Group, count, order and filter by the id freely — "which
+  franchise has the most deals" is `GROUP BY franchise_id ORDER BY count(*)
+  DESC`. What is unavailable is the mapping between one of these ids and its
+  name, in either direction. Report the id; never invent the name.
 
 - deals has no monetary, price or currency column, and no `days_in_stage`.
   Derive age from the timestamp columns in SCHEMA. If a question needs an
@@ -625,10 +673,46 @@ LEADS_RULES_ONLY = """\
 - Leads legitimately duplicate. When the user asks about unique leads,
   unique demand, or distinct people, you MUST filter
   `merged_into_id IS NULL`. `COUNT(DISTINCT id)` is not deduplication — it
-  counts merged duplicates as separate leads.
+  counts merged duplicates as separate leads. `is_duplicated` marks a lead
+  that was merged away, not one that has duplicates.
+
+- `lead_stage_id` is a numeric id and its lookup table is not in SCHEMA.
+  Group, count, order and filter by the id freely — "leads per stage" is
+  `GROUP BY lead_stage_id`. What is unavailable is the mapping between a
+  stage's name and its id, in either direction. Valid ids are 1-14, 16 and
+  17; there is no stage 15.
+
+- `lead_source_id`, `lead_channel_id`, `campaign_id` and `project_id` behave
+  the same way: the id is queryable, the name is not, and must never be
+  invented. `utm_source` and `utm_medium` are plain text on the lead itself
+  and can be grouped and filtered by name.
+
+- `outcome_reason_id` is NULL for every row in this CRM. Never filter,
+  group or join on it — a query using it returns nothing and looks like a
+  real zero. Loss and outcome reasons live in `loss_reason_category`, which
+  is populated text; use that instead.
+
+- Conversion is recorded on the lead: `converted_at` is when it converted
+  and `converted_to_opportunity_id` points at the opportunity. Use those for
+  conversion questions.
 
 - `is_stale` is already computed; do not recalculate staleness from dates.
-  `current_stage_entered_at` is the stage dwell clock."""
+  `current_stage_entered_at` is the stage dwell clock — time in the current
+  stage is measured from it, not from `created_at`.
+
+- `response_time_minutes` is already computed from `first_response_at`. Use
+  it directly. `sla_breach_at` is non-NULL only when the SLA was breached,
+  so `sla_breach_at IS NOT NULL` counts breaches.
+
+- Which date: `created_at` is when the record was entered,
+  `first_created_at` the original creation before any replication, and
+  `last_action_at` the most recent activity of any kind.
+
+- Qualification is BANT: `qualification_status` is the overall verdict and
+  `budget_status`, `authority_status`, `need_status`, `timeline_status` are
+  the four axes. `qualification_score`, `engagement_score` and
+  `predictive_score` are separate numeric scores — do not treat them as
+  interchangeable."""
 
 
 USERS_RULES_ONLY = """\
@@ -852,6 +936,10 @@ __all__ = [
     "LEADS_TABLE",
     "USERS_TABLE",
     "ALL_RULES",
+    "DEALS_RULES_ONLY",
+    "LEADS_RULES_ONLY",
+    "USERS_RULES_ONLY",
+    "RULES_BY_TABLE",
     "relationships_for",
     "render_enums",
     "build_rules",

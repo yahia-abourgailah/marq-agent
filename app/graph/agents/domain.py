@@ -44,11 +44,13 @@ from langchain.agents import create_agent
 from app.db.connection import Database, app_db
 from app.db.repositories.sql import SQLRepository
 from app.graph.agents.deals import DEALS_AGENT_SYSTEM_PROMPT
+from app.graph.agents.leads import LEADS_AGENT_SYSTEM_PROMPT
 from app.sql.agent import build_sql_agent
 from app.sql.catalogue import DEALS_TABLE, LEADS_TABLE, USERS_TABLE, Table
 from app.sql.executor import SQLExecutor
 from app.sql.guard import SQLGuard
 from app.tools.analysis import ANALYSIS_TOOLS
+from app.tools.leads import LEADS_TOOLS
 from app.tools.sql import build_sql_tool
 
 
@@ -84,9 +86,29 @@ DEALS = Domain(
 )
 
 
+LEADS = Domain(
+    name="leads",
+    # [claude] Deliberately narrower than DEALS: leads and users only.
+    #
+    # Conversion is recorded on the lead itself (converted_at,
+    # converted_to_opportunity_id), so the funnel questions this agent exists
+    # for are answerable without reaching into deals. Keeping deals out is
+    # what makes the guard scoping real rather than decorative — this agent's
+    # guard rejects `SELECT ... FROM deals`.
+    #
+    # A question that genuinely spans both — "which lead sources produce the
+    # most contracted deals" — is a routing problem, and belongs to the
+    # supervisor rather than to either agent widening its own surface.
+    tables=(LEADS_TABLE, USERS_TABLE),
+    system_prompt=LEADS_AGENT_SYSTEM_PROMPT,
+    extra_tools=(*ANALYSIS_TOOLS, *LEADS_TOOLS),
+)
+
+
 # Registered domains, by name. The supervisor will route across these.
 DOMAINS: dict[str, Domain] = {
     DEALS.name: DEALS,
+    LEADS.name: LEADS,
 }
 
 
@@ -127,6 +149,7 @@ def build_domain_agent(
 
 __all__ = [
     "DEALS",
+    "LEADS",
     "DOMAINS",
     "Domain",
     "build_domain_agent",

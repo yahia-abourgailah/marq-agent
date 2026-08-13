@@ -20,6 +20,23 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from evals.cases import CASES, Case  # noqa: E402
 
 
+def sql_agent_for(domain_name: str):
+    """
+    [claude] Build the SQL Agent for one domain.
+
+    Cases are domain-scoped now: a leads case must run against the Leads
+    domain's SQL Agent, which sees leads and users only. Running every case
+    against one shared agent would silently pass the isolation cases.
+    """
+
+    from app.graph.agents.domain import DOMAINS
+    from app.llm.model import get_model
+    from app.sql.agent import build_sql_agent
+
+    domain = DOMAINS[domain_name]
+    return build_sql_agent(get_model(), tables=domain.tables)
+
+
 async def evaluate(case: Case, agent) -> tuple[bool, str]:
     """Return (passed, detail)."""
 
@@ -51,27 +68,30 @@ async def evaluate(case: Case, agent) -> tuple[bool, str]:
     return True, result.query
 
 
-async def main_async(tag: str | None, verbose: bool) -> int:
-    from app.llm.model import get_model
-    from app.sql.agent import build_sql_agent
+async def main_async(tag: str | None, verbose: bool, domain: str | None) -> int:
+    cases = [
+        c
+        for c in CASES
+        if (not tag or tag in c.tags) and (not domain or c.domain == domain)
+    ]
 
-    cases = [c for c in CASES if not tag or tag in c.tags]
-    agent = build_sql_agent(get_model())
+    # One agent per domain, built once and reused across its cases.
+    agents = {name: sql_agent_for(name) for name in {c.domain for c in cases}}
 
     passed = 0
     failures = []
 
     for case in cases:
-        ok, detail = await evaluate(case, agent)
+        ok, detail = await evaluate(case, agents[case.domain])
 
         if ok:
             passed += 1
-            print(f"  PASS  {case.name}")
+            print(f"  PASS  [{case.domain}] {case.name}")
             if verbose:
                 print(f"        {detail}")
         else:
             failures.append(case.name)
-            print(f"  FAIL  {case.name}")
+            print(f"  FAIL  [{case.domain}] {case.name}")
             print(f"        why: {case.why}")
             print(f"        {detail}")
 
@@ -87,10 +107,13 @@ async def main_async(tag: str | None, verbose: bool) -> int:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tag", help="only run cases carrying this tag")
+    parser.add_argument("--domain", help="only run cases for this domain")
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 
-    raise SystemExit(asyncio.run(main_async(args.tag, args.verbose)))
+    raise SystemExit(
+        asyncio.run(main_async(args.tag, args.verbose, args.domain))
+    )
 
 
 if __name__ == "__main__":

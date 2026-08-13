@@ -192,6 +192,7 @@ def build_sql_tool(
 
 
 __all__ = [
+    "MAX_RESULT_CHARS",  # [claude]
     "SQLTool",
     "build_sql_tool",
 ]

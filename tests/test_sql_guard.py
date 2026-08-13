@@ -220,3 +220,41 @@ def test_out_of_catalogue_access_is_still_rejected(query):
 
     with pytest.raises(SQLGuardError):
         guard.validate(query)
+
+
+def test_exists_is_allowed():
+    """
+    [claude] EXISTS is a subquery predicate, not a callable function.
+
+    Blocking it broke the lead-to-deal conversion metric end to end: the SQL
+    Agent wrote the correct query, the guard rejected it, and the Deals Agent
+    fell back to dividing raw counts — a confidently wrong answer.
+    """
+
+    guard = SQLGuard()
+
+    guard.validate(
+        "SELECT count(*) FILTER (WHERE EXISTS ("
+        "SELECT 1 FROM leads l WHERE l.id = deals.lead_id)) AS n FROM deals"
+    )
+    guard.validate(
+        "SELECT count(*) AS n FROM deals d "
+        "WHERE NOT EXISTS (SELECT 1 FROM leads l WHERE l.id = d.lead_id)"
+    )
+
+
+def test_exists_cannot_smuggle_a_blocked_table():
+    """Widening EXISTS must not widen the data surface."""
+
+    guard = SQLGuard(tables=frozenset({"leads", "users"}))
+
+    with pytest.raises(SQLGuardError):
+        guard.validate(
+            "SELECT count(*) AS n FROM leads "
+            "WHERE EXISTS (SELECT 1 FROM deals d WHERE d.lead_id = leads.id)"
+        )
+
+    with pytest.raises(SQLGuardError):
+        guard.validate(
+            "SELECT 1 WHERE EXISTS (SELECT 1 FROM pg_catalog.pg_authid)"
+        )
