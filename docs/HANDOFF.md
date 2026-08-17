@@ -584,11 +584,10 @@ and never enters the message state.
   lifespan.
 
 **Housekeeping:**
-- Git identity was auto-derived (`ahmedbadr@MacBook-Air-Ahmed.local`).
-  `user.email` is now set **repo-locally** to `baraaibrahim171@gmail.com`;
-  change it with `git config user.email …`, or set a global one if that suits
-  every repo better. Local rather than global deliberately — a global identity
-  is a decision about every project on the machine, not just this one.
+- Git identity is auto-derived (`ahmedbadr@MacBook-Air-Ahmed.local`), which is
+  what the commits on this branch carry. Set `user.email` before pushing
+  anywhere that matters — `git config user.email …` for this repo alone, or
+  `--global` if the same identity suits every project on the machine.
 - `docs/marq-agent-architecture.pdf` is tracked as of `dcc59eb`; the open
   question is whether generated artefacts belong in the repo at all.
 - **Live CRM (`10.10.67.77:5432`) is network-reachable from here, but no
