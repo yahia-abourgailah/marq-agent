@@ -16,6 +16,25 @@ class SQLGuardError(ValueError):
     """Raised when generated SQL is not safe to execute."""
 
 
+class TableNotAllowedError(SQLGuardError):
+    """
+    [claude] The query reached for a table outside this agent's domain.
+
+    Split out from SQLGuardError because the two failures have opposite
+    remedies and the caller could not tell them apart. Most guard rejections
+    are worth one retry — the model wrote `SELECT ... FOR UPDATE` or used a
+    function outside the allowlist, and a rephrase genuinely can produce
+    valid SQL. A table rejection cannot: the allowlist is derived from the
+    Domain, so `deals` will never be permitted to the Leads Agent however
+    the question is worded.
+
+    Reported as retryable, it produced exactly the loop you would expect —
+    the Leads Agent asked about contracted deals, was rejected, rephrased,
+    was rejected again, and burned five tool calls before declining. The
+    decline was correct; the four attempts before it were not.
+    """
+
+
 MAX_ROWS = 500
 
 
@@ -300,7 +319,7 @@ class SQLGuard:
                 continue
 
             if table_name not in allowed_tables:
-                raise SQLGuardError(
+                raise TableNotAllowedError(
                     f"Table '{table.name}' is not allowed."
                 )
 
@@ -515,4 +534,5 @@ __all__ = [
     "MAX_ROWS",
     "SQLGuard",
     "SQLGuardError",
+    "TableNotAllowedError",  # [claude]
 ]

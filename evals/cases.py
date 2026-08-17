@@ -125,9 +125,22 @@ CASES: tuple[Case, ...] = (
     Case(
         name="owner_name_joins_users",
         question="How many deals does Sara Mostafa own?",
-        must_contain=("users", "owner_id", "name"),
-        why="Owner names resolve through users, which must be in the prompt.",
-        tags=("joins",),
+        # [claude] Was must_contain=("users", "owner_id", "name"). The live
+        # MyTAI schema is explicit that `deals.agent_id` is the deal owner
+        # and the axis MyDealsScope filters on; `owner_id` is another users
+        # reference with no ownership role. This case asserted the wrong
+        # column, and I trusted it as evidence when disambiguating the two —
+        # which propagated the error into the catalogue before the real
+        # schema arrived.
+        must_contain=("users", "agent_id", "name"),
+        must_not_contain=("owner_id",),
+        why=(
+            "Owner names resolve through users, and ownership is agent_id — "
+            "the column the CRM's own row-level visibility uses. Answering "
+            "through owner_id gives a different number that will not match "
+            "what the user sees on screen."
+        ),
+        tags=("joins", "ambiguity"),
     ),
     Case(
         name="deals_to_leads_via_lead_id",
@@ -337,6 +350,45 @@ LEADS_CASES: tuple[Case, ...] = (
         question="What is the average response time for leads?",
         must_contain=("response_time_minutes", "avg("),
         why="response_time_minutes is already computed from first_response_at.",
+        tags=("leads",),
+    ),
+    Case(
+        name="ownership_wording_all_lands_on_agent_id",
+        question="Whose deals are these? Show the deal count per person.",
+        must_contain=("agent_id",),
+        must_not_contain=("owner_id",),
+        why=(
+            "[claude] The counterpart to owner_name_joins_users. Both columns "
+            "described themselves as the owner, so the SQL agent joined on "
+            "whichever it picked — 13 deals through owner_id against 6 "
+            "through agent_id, disagreeing on 307 of 350 rows. Every phrasing "
+            "of ownership has to land on agent_id, which is what the CRM's "
+            "own scoping uses."
+        ),
+        tags=("joins", "ambiguity"),
+    ),
+    Case(
+        name="stale_deals_is_refused_not_invented",
+        question="Which franchises have the most stale deals?",
+        expect_refusal=True,
+        why=(
+            "[claude] `is_stale` is a leads column, and the Deals Agent is "
+            "shown the leads table too — so it read the staleness rule as "
+            "though the column were universal and wrote "
+            "`FROM deals WHERE is_stale = TRUE`. PostgreSQL rejects that "
+            "with UndefinedColumn, after which the agent sometimes reported "
+            "invented stale-deal counts per franchise instead of the "
+            "failure. Refusing here means the invalid SQL is never written, "
+            "so there is no error for it to fabricate around."
+        ),
+        tags=("refusal", "invention"),
+    ),
+    Case(
+        name="stale_leads_still_works",
+        domain="leads",
+        question="How many leads are stale?",
+        must_contain=("is_stale",),
+        why="The refusal above must not cost the real leads metric.",
         tags=("leads",),
     ),
 )

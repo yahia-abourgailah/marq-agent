@@ -1,6 +1,11 @@
 import pytest
 
-from app.sql.guard import ALLOWED_FUNCTIONS, SQLGuard, SQLGuardError
+from app.sql.guard import (
+    ALLOWED_FUNCTIONS,
+    MAX_ROWS,
+    SQLGuard,
+    SQLGuardError,
+)
 
 # [claude] One representative call per PostgreSQL-spelled function the guard is
 # meant to permit. Keyed by the spelling the SQL agent writes, which is not
@@ -258,3 +263,215 @@ def test_exists_cannot_smuggle_a_blocked_table():
         guard.validate(
             "SELECT 1 WHERE EXISTS (SELECT 1 FROM pg_catalog.pg_authid)"
         )
+
+
+# ============================================================
+# [claude] Out-of-domain tables are a different failure.
+# ============================================================
+
+
+def test_a_table_outside_the_domain_raises_the_specific_error():
+    """
+    Subclassing keeps every existing `except SQLGuardError` working while
+    letting the tool tell the two rejections apart.
+    """
+
+    from app.sql.guard import TableNotAllowedError
+
+    guard = SQLGuard(tables=frozenset({"leads", "users"}))
+
+    with pytest.raises(TableNotAllowedError):
+        guard.validate("SELECT count(*) FROM deals")
+
+    with pytest.raises(SQLGuardError):
+        guard.validate("SELECT count(*) FROM deals")
+
+
+def test_other_guard_rejections_are_not_table_errors():
+    """
+    [claude] The distinction that matters: these are worth a retry, a table
+    rejection never is. Conflating them made the Leads Agent rephrase four
+    times for a table its guard will never permit.
+    """
+
+    from app.sql.guard import TableNotAllowedError
+
+    guard = SQLGuard(tables=frozenset({"leads"}))
+
+    for query in (
+        "SELECT pg_sleep(1) FROM leads",
+        "DELETE FROM leads",
+        "SELECT 1; SELECT 2",
+    ):
+        with pytest.raises(SQLGuardError) as exc:
+            guard.validate(query)
+
+        assert not isinstance(exc.value, TableNotAllowedError), query
+
+
+# ============================================================
+# [claude] Pressure tests — smuggling paths the earlier cases miss.
+#
+# Every one of these is a way to reach data through SQL that parses as a
+# plain SELECT. The guard's job is to stay boring under all of them.
+# ============================================================
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        # Set operations — each arm needs checking, not just the first.
+        "SELECT id FROM deals UNION SELECT id FROM pg_tables",
+        "SELECT id FROM deals UNION ALL SELECT oid FROM pg_class",
+        "SELECT id FROM deals INTERSECT SELECT id FROM information_schema.tables",
+        "SELECT id FROM deals EXCEPT SELECT id FROM pg_stat_activity",
+        # Subqueries in every clause position.
+        "SELECT (SELECT count(*) FROM pg_tables) AS n FROM deals",
+        "SELECT id FROM deals WHERE id IN (SELECT oid FROM pg_class)",
+        "SELECT id FROM deals WHERE EXISTS (SELECT 1 FROM pg_shadow)",
+        # Joins.
+        "SELECT d.id FROM deals d JOIN pg_tables t ON true",
+        "SELECT d.id FROM deals d, pg_class c",
+        # CTEs that define a name and still read a real forbidden table.
+        "WITH x AS (SELECT * FROM pg_tables) SELECT * FROM x",
+        # Schema qualification.
+        "SELECT * FROM public.deals",
+        "SELECT * FROM pg_catalog.pg_tables",
+        # Derived tables.
+        "SELECT * FROM (SELECT * FROM pg_tables) AS sub",
+    ],
+)
+def test_forbidden_tables_cannot_be_reached_through_any_clause(query):
+    guard = SQLGuard(tables=frozenset({"deals", "leads", "users"}))
+
+    with pytest.raises(SQLGuardError):
+        guard.validate(query)
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "SELECT pg_read_file('/etc/passwd') FROM deals",
+        "SELECT pg_sleep(10) FROM deals",
+        "SELECT lo_import('/etc/passwd') FROM deals",
+        "SELECT query_to_xml('SELECT 1', true, true, '') FROM deals",
+        "SELECT dblink('', 'SELECT 1') FROM deals",
+        "SELECT current_setting('is_superuser') FROM deals",
+        "SELECT set_config('x', 'y', true) FROM deals",
+        "SELECT version() FROM deals",
+        "SELECT pg_ls_dir('.') FROM deals",
+    ],
+)
+def test_dangerous_functions_are_rejected(query):
+    guard = SQLGuard(tables=frozenset({"deals"}))
+
+    with pytest.raises(SQLGuardError):
+        guard.validate(query)
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "SELECT id FROM deals FOR UPDATE",
+        "SELECT id FROM deals FOR SHARE",
+        "SELECT id FROM deals FOR NO KEY UPDATE",
+    ],
+)
+def test_row_locking_is_rejected(query):
+    guard = SQLGuard(tables=frozenset({"deals"}))
+
+    with pytest.raises(SQLGuardError):
+        guard.validate(query)
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "INSERT INTO deals (id) VALUES (1)",
+        "UPDATE deals SET status = 'contracted'",
+        "DELETE FROM deals",
+        "TRUNCATE deals",
+        "DROP TABLE deals",
+        "ALTER TABLE deals ADD COLUMN x int",
+        "CREATE TABLE x (id int)",
+        "GRANT SELECT ON deals TO public",
+        "COPY deals TO '/tmp/out.csv'",
+        "CALL some_procedure()",
+        "DO $$ BEGIN END $$",
+    ],
+)
+def test_nothing_that_writes_or_commands_gets_through(query):
+    guard = SQLGuard(tables=frozenset({"deals"}))
+
+    with pytest.raises(SQLGuardError):
+        guard.validate(query)
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "SELECT id FROM deals; DROP TABLE deals",
+        "SELECT id FROM deals;DELETE FROM leads",
+        "SELECT id FROM deals; -- harmless\nUPDATE deals SET id = 1",
+    ],
+)
+def test_statement_stacking_is_rejected(query):
+    guard = SQLGuard(tables=frozenset({"deals", "leads"}))
+
+    with pytest.raises(SQLGuardError):
+        guard.validate(query)
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "SELECT id FROM deals LIMIT 100000",
+        # [claude] LIMIT ALL is PostgreSQL for "no limit", so it is the one
+        # spelling that could quietly return the whole table. sqlglot drops
+        # it during parsing and the guard then adds its own ceiling — the
+        # right outcome, reached indirectly, which is exactly the kind of
+        # thing worth pinning with a test.
+        "SELECT id FROM deals LIMIT ALL",
+        "SELECT id FROM deals",
+        "SELECT id FROM deals OFFSET 100",
+    ],
+)
+def test_every_query_comes_back_bounded(query):
+    guard = SQLGuard(tables=frozenset({"deals"}))
+
+    assert f"LIMIT {MAX_ROWS}" in guard.validate(query).upper()
+
+
+@pytest.mark.parametrize("limit", ["LIMIT (SELECT 5)", "LIMIT -1"])
+def test_limits_the_guard_cannot_evaluate_are_rejected(limit):
+    """A ceiling that cannot be read cannot be enforced, so refuse instead."""
+
+    guard = SQLGuard(tables=frozenset({"deals"}))
+
+    with pytest.raises(SQLGuardError):
+        guard.validate(f"SELECT id FROM deals {limit}")
+
+
+def test_an_empty_or_whitespace_query_is_rejected():
+    guard = SQLGuard(tables=frozenset({"deals"}))
+
+    for query in ("", "   ", "\n\t"):
+        with pytest.raises(SQLGuardError):
+            guard.validate(query)
+
+
+def test_the_domain_scope_is_per_guard_not_global():
+    """
+    Two guards in one process must not share a surface. This is the property
+    that makes the leads agent genuinely unable to see deals.
+    """
+
+    deals_guard = SQLGuard(tables=frozenset({"deals", "leads", "users"}))
+    leads_guard = SQLGuard(tables=frozenset({"leads", "users"}))
+
+    query = "SELECT count(*) FROM deals"
+
+    deals_guard.validate(query)
+
+    with pytest.raises(SQLGuardError):
+        leads_guard.validate(query)

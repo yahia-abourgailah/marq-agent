@@ -31,6 +31,15 @@ FORBIDDEN_COLUMNS = [
     "collection_price",
     "down_payment",
     "total_retroactive_commission",
+    # [claude] The list was missing five of the eleven masked columns, so
+    # these tests would not have noticed the agent reaching for a lead's
+    # budget or a campaign's spend. Kept in step with RESTRICTED_COLUMNS in
+    # tests/test_consistency.py, which checks the catalogue itself.
+    "date_ten_percentage",
+    "budget_amount",
+    "cost_per_lead",
+    "ad_spend_amount",
+    "last_activity_feedback",
 ]
 
 
@@ -83,8 +92,15 @@ async def test_sql_agent_owner_query_uses_users():
     assert "SELECT" in upper_sql
     assert "DEALS" in upper_sql
     assert "USERS" in upper_sql
-    assert "OWNER_ID" in upper_sql
     assert "NAME" in upper_sql
+
+    # [claude] Was OWNER_ID. The live MyTAI schema is explicit that
+    # `deals.agent_id` is the deal owner and the axis MyDealsScope filters
+    # on; `owner_id` is another users reference with no ownership role.
+    # This is the third place that encoded the wrong column — the catalogue
+    # and evals/cases.py were the others.
+    assert "AGENT_ID" in upper_sql
+    assert "OWNER_ID" not in upper_sql
 
     for column in FORBIDDEN_COLUMNS:
         assert column.upper() not in upper_sql

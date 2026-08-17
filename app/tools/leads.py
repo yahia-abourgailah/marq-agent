@@ -92,6 +92,7 @@ def calculate_funnel(
         }
 
     steps = []
+    warnings: list[str] = []
     previous_count = None
 
     for stage, count in parsed:
@@ -107,6 +108,23 @@ def calculate_funnel(
             from_previous = round((count / previous_count) * 100, 2)
             dropped = previous_count - count
 
+            # [claude] More leads left a stage than entered it, which cannot
+            # happen in a real funnel. It means the stages were given in the
+            # wrong order — almost always because ascending stage id was
+            # assumed to be funnel order, which the CRM does not expose.
+            #
+            # The prompt already warns that a conversion above 100% is the
+            # giveaway, but that left the whole defence resting on the model
+            # noticing a number it just produced. Flagging it here means the
+            # signal survives a prompt edit.
+            if from_previous > 100:
+                warnings.append(
+                    f"'{stage}' holds more than the stage before it "
+                    f"({from_previous}% conversion, which is above 100%). "
+                    "These stages are not in funnel order — do not report "
+                    "this as a funnel."
+                )
+
         steps.append(
             {
                 "stage": stage,
@@ -120,7 +138,7 @@ def calculate_funnel(
 
     bottom_count = parsed[-1][1]
 
-    return {
+    result = {
         "success": True,
         "steps": steps,
         "top_stage": parsed[0][0],
@@ -128,6 +146,11 @@ def calculate_funnel(
         "overall_conversion_percent": round((bottom_count / top_count) * 100, 2),
         "total_lost": top_count - bottom_count,
     }
+
+    if warnings:
+        result["warnings"] = warnings
+
+    return result
 
 
 LEADS_TOOLS = [

@@ -59,11 +59,33 @@ DEALS_TABLE = Table(
         Column("batch_number", "Deal batch number."),
 
         # Ownership
-        Column("agent_id", "Current deal owner / agent user ID."),
+        # [claude] This is the owner, confirmed against the live MyTAI
+        # schema: "agent_id — deal owner — scope axis together with
+        # deal_percentages", and MyDealsScope filters on `agent_id = :me`.
+        #
+        # Both this and owner_id below used to describe themselves as the
+        # owner, so the SQL Agent joined on whichever it picked — 13 deals
+        # for one person through owner_id against 6 through agent_id, the
+        # columns disagreeing on 307 of 350 fixture rows. I first resolved
+        # that the wrong way round, making owner_id canonical because an
+        # existing eval expected it. The eval was wrong too.
+        Column(
+            "agent_id",
+            (
+                "The deal's owner. This is the column that answers who owns "
+                "a deal, whose deals they are, and 'my deals'."
+            ),
+        ),
         Column("creator_id", "User ID that originally created the deal."),
         Column("team_leader_id", "Team leader user ID."),
         Column("franchise_id", "Franchise / branch ID."),
-        Column("owner_id", "Deal owner user ID."),
+        Column(
+            "owner_id",
+            (
+                "A user reference on the deal. Despite the name this is NOT "
+                "the ownership axis — use agent_id for who owns a deal."
+            ),
+        ),
 
         # Lead / opportunity / attribution
         Column(
@@ -565,8 +587,8 @@ GENERIC_RULES = """\
   aggregate — never a set of rows to be counted afterwards.
 
 - Select only the columns the question needs; never `SELECT *`. Any query
-  returning individual records must include `id`, plus the human label for
-  that table (`unit_number` for deals, `name` for leads and users).
+  returning individual records must include `id`, plus that table's human
+  label — `name` on leads and users, `unit_number` where a table has one.
 
 - Aggregates and rates.
 
@@ -575,10 +597,10 @@ GENERIC_RULES = """\
   WHERE shrinks the denominator to match the numerator, and every rate comes
   out as 100%:
 
-      SELECT count(*) FILTER (WHERE status = 'contracted') * 1.0 / count(*)
-                 AS contracted_rate
-      FROM deals
-      WHERE deleted_at IS NULL AND is_commercial
+      SELECT count(*) FILTER (WHERE converted_at IS NOT NULL) * 1.0 / count(*)
+                 AS conversion_rate
+      FROM leads
+      WHERE deleted_at IS NULL AND merged_into_id IS NULL
 
   The same trap applies to a breakdown: never filter by the column you are
   grouping by, or the total contradicts the split beneath it.
@@ -589,14 +611,14 @@ GENERIC_RULES = """\
 
   Alias every aggregate for what one row holds, including its unit:
   `AVG(response_time_minutes) AS avg_response_time_minutes`, and in a
-  grouped query `count(*) AS deals_in_status` rather than `live_deal_count`.
+  grouped query `count(*) AS leads_in_stage` rather than `live_lead_count`.
   An alias that overstates its row is worse than none.
 
 - These columns are restricted and must never appear in generated SQL, in
   any clause, subquery, CTE or alias:
-      unit_price, reservation_price, contract_price, collection_price,
-      down_payment, total_retroactive_commission,
-      budget_amount, cost_per_lead, ad_spend_amount
+      unit_price, reservation_price, collection_price, contract_price,
+      down_payment, total_retroactive_commission, date_ten_percentage,
+      budget_amount, cost_per_lead, ad_spend_amount, last_activity_feedback
   A question needing one of them gets CANNOT_ANSWER. Do not answer it with a
   different column instead.
 
@@ -605,6 +627,51 @@ GENERIC_RULES = """\
 
 
 DEALS_RULES_ONLY = """\
+- [claude] Rates over deals. The measured condition goes in a FILTER and the
+  population in the WHERE, so the denominator stays the whole population:
+
+      SELECT count(*) FILTER (WHERE status = 'contracted') * 1.0 / count(*)
+                 AS contract_rate
+      FROM deals
+      WHERE deleted_at IS NULL AND is_commercial
+
+  This worked example lives in the deals rules rather than the shared ones
+  because only this agent can query `deals` — the shared rules used to carry
+  it, which handed `FROM deals` to the Leads Agent, whose guard rejects that
+  table.
+
+- [claude] Staleness does not exist for deals. `is_stale` is a `leads`
+  column and there is no deals equivalent, so "stale deals", "which
+  franchises have the most stale deals" and anything similar must return
+  CANNOT_ANSWER — say staleness is tracked for leads only.
+
+  This lives here, in the deals rules, because only an agent holding both
+  tables can make the mistake: it read the leads rule as though the column
+  were universal and wrote `SELECT ... FROM deals WHERE is_stale = TRUE`.
+  PostgreSQL rejects that with UndefinedColumn, after which the agent
+  sometimes reported invented stale-deal counts per franchise rather than
+  the failure. Never substitute a metric of your own for one the CRM does
+  not have: an invented measure reported as a CRM figure is
+  indistinguishable from a real one.
+
+- [claude] One lead can produce SEVERAL deals — thousands of leads in the
+  live CRM have two or more, so the relationship is not 1:1. Counting deals
+  is therefore not counting converted leads, and a conversion rate built
+  from deal counts comes out too high: the recorded error was 35.63% where
+  the truth was 31.67%. Count the leads that converted —
+  `COUNT(DISTINCT leads.id)` or `COUNT(*) FILTER (WHERE converted_at IS NOT
+  NULL)` — never the deals they produced.
+
+- [claude] Ownership is `agent_id`. "Who owns it", "whose deals", "X's
+  deals" and "my deals" all resolve through `deals.agent_id = users.id`.
+  This is the axis the CRM's own row-level visibility uses, so a count made
+  any other way will disagree with what the user sees on screen.
+
+  `owner_id` is also a users reference and is a different person on most
+  rows — the two disagree on 307 of 350 deals in the test fixture. Picking
+  the wrong one does not fail; it returns a different number with equal
+  confidence. Do not use `owner_id` for ownership questions.
+
 - `status` is one of: cancelled, eoi, contracted, reservation. Nothing else
   exists.
       active         -> status IN ('eoi', 'reservation', 'contracted')
@@ -696,13 +763,51 @@ LEADS_RULES_ONLY = """\
   and `converted_to_opportunity_id` points at the opportunity. Use those for
   conversion questions.
 
+  [claude] Count the leads that converted —
+  `COUNT(*) FILTER (WHERE converted_at IS NOT NULL)` — as the numerator, over
+  all live leads as the denominator.
+
 - `is_stale` is already computed; do not recalculate staleness from dates.
   `current_stage_entered_at` is the stage dwell clock — time in the current
   stage is measured from it, not from `created_at`.
 
+  `is_stale` belongs to `leads` and to no other table.
+
 - `response_time_minutes` is already computed from `first_response_at`. Use
   it directly. `sla_breach_at` is non-NULL only when the SLA was breached,
   so `sla_breach_at IS NOT NULL` counts breaches.
+
+- [claude] "Does responding faster convert better", "conversion rate by
+  response speed" and anything else splitting conversion by a numeric column
+  is answerable, and has three ways to go wrong at once. Bucket the number
+  yourself with CASE, SELECT the bucket, and take the rate inside each one:
+
+      SELECT
+        CASE WHEN response_time_minutes <= 60 THEN 'within_1_hour'
+             ELSE 'over_1_hour' END AS response_bucket,
+        COUNT(*) AS leads_in_bucket,
+        COUNT(converted_at) AS converted_in_bucket,
+        ROUND(100.0 * COUNT(converted_at) / COUNT(*), 2) AS conversion_rate_pct
+      FROM leads
+      WHERE deleted_at IS NULL AND response_time_minutes IS NOT NULL
+      GROUP BY response_bucket
+
+  The three traps, all of which produce a confident wrong number:
+
+    the denominator is the leads in that bucket, `COUNT(*)`, never the
+    converted leads overall — dividing by the total converted gives each
+    bucket's share of conversions, which sums to 100% across buckets and is
+    a different question;
+
+    the bucket expression must appear in SELECT, or the rates come back
+    unlabelled and cannot be attributed to fast or slow;
+
+    rows with a NULL `response_time_minutes` were never responded to and
+    belong in neither bucket, so exclude them rather than letting them fall
+    into the slow one.
+
+  A bucket holding very few leads makes its rate unstable, which is why
+  `leads_in_bucket` is selected too. Never report a rate without it.
 
 - Which date: `created_at` is when the record was entered,
   `first_created_at` the original creation before any replication, and

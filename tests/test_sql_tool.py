@@ -197,3 +197,59 @@ async def test_trimming_is_reported_to_the_agent(monkeypatch):
     assert result["row_count"] < 400
     assert result["truncated"] is True
     assert len(json.dumps(result["data"])) <= MAX_RESULT_CHARS * 1.1
+
+
+# ============================================================
+# [claude] An out-of-domain table must not be retryable.
+# ============================================================
+
+
+@pytest.mark.asyncio
+async def test_out_of_domain_table_is_reported_as_not_available(monkeypatch):
+    """
+    Rephrasing cannot help — the allowlist comes from the Domain — so the
+    agent must relay the limit and stop rather than loop.
+    """
+
+    from app.sql.guard import TableNotAllowedError
+
+    async def fake_generate_sql(agent, question):
+        return Sql(query="SELECT count(*) FROM deals")
+
+    monkeypatch.setattr("app.tools.sql.generate_sql", fake_generate_sql)
+
+    class RejectingRepository:
+        async def execute_read(self, query, params=()):
+            raise TableNotAllowedError("Table 'deals' is not allowed.")
+
+    tool = SQLTool(
+        sql_agent=FakeSQLAgent(),
+        repository=RejectingRepository(),
+    )
+
+    result = await tool.query("how many contracted deals")
+
+    assert result["success"] is False
+    assert result["retryable"] is False
+    assert result["reason"] == "not_available"
+
+
+@pytest.mark.asyncio
+async def test_other_guard_rejections_stay_retryable(monkeypatch):
+    """The distinction is the point: these are worth one more attempt."""
+
+    async def fake_generate_sql(agent, question):
+        return Sql(query="SELECT pg_sleep(1) FROM deals")
+
+    monkeypatch.setattr("app.tools.sql.generate_sql", fake_generate_sql)
+
+    class RejectingRepository:
+        async def execute_read(self, query, params=()):
+            raise SQLGuardError("Function 'PG_SLEEP' is not allowed.")
+
+    tool = SQLTool(sql_agent=FakeSQLAgent(), repository=RejectingRepository())
+
+    result = await tool.query("anything")
+
+    assert result["retryable"] is True
+    assert result["reason"] == "rejected_by_guard"

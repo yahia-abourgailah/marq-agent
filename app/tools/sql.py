@@ -11,7 +11,7 @@ from langchain_core.tools import tool
 
 from app.db.repositories.sql import SQLRepository
 from app.sql.agent import Refused, generate_sql
-from app.sql.guard import MAX_ROWS, SQLGuardError
+from app.sql.guard import MAX_ROWS, SQLGuardError, TableNotAllowedError
 
 # [claude] Serialised-payload ceiling for one tool result, in characters.
 # Roughly 5,000 tokens at ~4 chars/token — enough for a wide sample or a few
@@ -138,6 +138,25 @@ class SQLTool:
                 "rows_available": rows_available,  # [claude]
                 "truncated": truncated,
                 "max_rows": MAX_ROWS,
+            }
+
+        except TableNotAllowedError as exc:
+            # [claude] The question needs a table this domain does not have.
+            #
+            # Must be checked before SQLGuardError, which it subclasses.
+            # Marked non-retryable because no rewording can help: the
+            # allowlist comes from the Domain, so the table will never be
+            # permitted to this agent. Reported as `not_available`, which is
+            # what the prompts already tell the agent to relay in one
+            # sentence and stop — the same treatment as restricted data.
+            #
+            # Previously this fell through to the retryable branch below and
+            # the agent rephrased four times before declining.
+            return {
+                "success": False,
+                "retryable": False,
+                "reason": "not_available",
+                "error": str(exc),
             }
 
         except SQLGuardError as exc:
