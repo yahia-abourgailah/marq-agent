@@ -18,7 +18,8 @@
   "graphs": {
     "marq_agent": "./app/graph/builder.py:build_supervisor_studio_graph",
     "deals_agent": "./app/graph/builder.py:build_studio_graph",
-    "leads_agent": "./app/graph/builder.py:build_leads_studio_graph"
+    "leads_agent": "./app/graph/builder.py:build_leads_studio_graph",
+    "workspace_agent": "./app/graph/builder.py:build_workspace_studio_graph"
   },
   "env": ".env.development"
 }

@@ -108,6 +108,74 @@ ROUTE_CASES: tuple[RouteCase, ...] = (
         "deals",
         why="A performance overview is a pipeline question.",
     ),
+    # ---- uploaded files -> workspace ---------------------------------
+    #
+    # [claude] The workspace agent is the only one that can see an uploaded
+    # file, so these misroute silently in the worst way: the deals agent
+    # answers the CRM half of a reconciliation question convincingly and
+    # never mentions that it could not open the file.
+    RouteCase("What's in the spreadsheet I uploaded?", "workspace"),
+    RouteCase("Summarise the PDF I just sent.", "workspace"),
+    RouteCase("What are the payment terms in that contract?", "workspace"),
+    RouteCase("How many rows are in my sheet?", "workspace"),
+    RouteCase("What columns does my file have?", "workspace"),
+    # ---- file + CRM together -> workspace, not deals ------------------
+    RouteCase(
+        "Does my spreadsheet match our contracted deals?",
+        "workspace",
+        why=(
+            "Mentions deals, so the deals rule would claim it. Only the "
+            "workspace agent holds both sides of a reconciliation."
+        ),
+    ),
+    RouteCase(
+        "Check this list of deals against the CRM.",
+        "workspace",
+        why="A comparison, even though 'deals' is the louder noun.",
+    ),
+    RouteCase(
+        "Reconcile the amounts in my file with what we have recorded.",
+        "workspace",
+    ),
+    RouteCase(
+        "Are any of the leads in my upload missing from the system?",
+        "workspace",
+        why="Leads plus a file is still a workspace question.",
+    ),
+    RouteCase(
+        "Compare the totals in my sheet to our pipeline.",
+        "workspace",
+    ),
+    # ---- a file question with no file is still workspace --------------
+    RouteCase(
+        "What does my uploaded file say about penalties?",
+        "workspace",
+        why=(
+            "Whether anything is actually uploaded is the specialist's to "
+            "report. Routing it elsewhere answers a different question."
+        ),
+    ),
+    # ---- no file mentioned -> unchanged -------------------------------
+    RouteCase(
+        "How many contracted deals do we have?",
+        "deals",
+        why="No file in sight; the workspace rule must not over-trigger.",
+    ),
+    RouteCase(
+        "What share of leads comes from meta?",
+        "leads",
+        why="Guards against the workspace category swallowing plain CRM work.",
+    ),
+    # ---- follow-up brings a file in -> moves to workspace --------------
+    RouteCase(
+        "How does that compare with the sheet I uploaded?",
+        "workspace",
+        why="Rule 1 outranks staying with the previous specialist.",
+        history=(
+            ("user", "How many contracted deals do we have?"),
+            ("assistant", "There are 225 contracted deals."),
+        ),
+    ),
     # ---- genuinely out of scope --------------------------------------
     RouteCase("What is the weather in Cairo today?", "out_of_scope"),
     RouteCase("Write me a poem about real estate.", "out_of_scope"),

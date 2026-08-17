@@ -231,3 +231,13 @@ node_modules/
 
 # [claude] LangGraph API server local state (created by `langgraph dev`)
 .langgraph_api/
+
+# [claude] Uploaded workspace files and their parsed content.
+#
+# `var/` is already ignored above by the packaging template, which is where
+# settings.workspace_root points by default — but that is a coincidence, not
+# a decision. Stated explicitly here because these are user uploads holding
+# customer data, and the cost of the template line being pruned one day is a
+# repository full of someone's contracts.
+var/workspace/
+

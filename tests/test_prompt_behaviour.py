@@ -89,3 +89,69 @@ async def test_routing_case(case, routing_model):
         f"routed to {got}, expected {case.expected}"
         + (f" — {case.why}" if case.why else "")
     )
+
+
+# ============================================================
+# [claude] Workspace Agent behaviour.
+#
+# These need a built workspace, so the fixture uploads real files into a
+# temporary directory and an in-memory index, and the graph is built with
+# that service injected. Nothing touches whatever is uploaded locally.
+#
+# They exist because the two properties holding the workspace design up —
+# totals come from workspace_aggregate rather than workspace_search, and a
+# comparison reports what the tool found — are invisible to every other
+# suite. The hermetic tests prove the tools are right; only these check that
+# the agent reaches for the right one.
+# ============================================================
+
+
+@pytest.fixture(scope="module")
+def workspace_setup():
+    """
+    Build the eval workspace once, and the graph that reads it.
+
+    [claude] `asyncio.run` rather than `get_event_loop().run_until_complete`,
+    which raises outside a running loop on Python 3.12+ and would have failed
+    the first time anyone ran this suite. Caught by the consistency audit
+    hitting the same mistake.
+    """
+
+    import asyncio
+
+    from app.graph.agents.domain import WORKSPACE
+    from app.graph.builder import build_graph
+    from evals.workspace_cases import build_cases
+    from evals.workspace_fixture import build
+
+    expected = asyncio.run(build())
+    service = expected.pop("service")
+
+    return build_cases(expected), build_graph(
+        WORKSPACE, workspace_service=service
+    )
+
+
+@pytest.mark.asyncio
+async def test_workspace_cases(workspace_setup):
+    """
+    [claude] Run every workspace case against one built workspace.
+
+    Not parametrised, unlike the suites above: building the workspace means
+    loading the embedding model and ingesting two files, and pytest would
+    tear the module fixture down and rebuild it per parameter under some
+    loop scopes. One test, all cases, and the assertion names whichever
+    failed.
+    """
+
+    cases, graph = workspace_setup
+
+    failures = []
+
+    for case in cases:
+        passed, detail = await graph_evaluate(case, graph)
+
+        if not passed:
+            failures.append(f"{case.name}: {detail}\n  why: {case.why}")
+
+    assert not failures, "\n\n".join(failures)

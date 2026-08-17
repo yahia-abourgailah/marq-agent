@@ -12,6 +12,7 @@ from app.graph.agents.domain import (
     DEALS,
     DOMAINS,
     LEADS,
+    WORKSPACE,
     Domain,
     build_domain_agent,
 )
@@ -24,6 +25,7 @@ from app.graph.supervisor import (
     out_of_scope_message,
 )
 from app.llm.model import get_model
+from app.tools.workspace import WorkspaceContext
 
 # [claude] Was an inline `10` in the node. A ReAct loop spends two steps per
 # tool call, so 10 allowed roughly four calls — enough for one sql_query plus
@@ -32,7 +34,7 @@ from app.llm.model import get_model
 MAX_AGENT_STEPS = 16
 
 
-def make_domain_node(domain: Domain, model):
+def make_domain_node(domain: Domain, model, workspace_service=None):
     """
     [claude] Build the graph node that runs one domain agent.
 
@@ -40,9 +42,21 @@ def make_domain_node(domain: Domain, model):
     ceiling and the GraphRecursionError handling exist once rather than being
     duplicated per agent — which is exactly how the second agent would have
     quietly lost the recursion guard.
+
+    `workspace_service` is passed through for domains that read uploaded
+    files, mirroring how `database` is already injectable further down. The
+    workspace evals need it: they build a throwaway workspace in a temporary
+    directory, and without a way to inject it the graph would read whatever
+    the developer happens to have uploaded locally.
     """
 
-    agent = build_domain_agent(domain, model=model)
+    agent = build_domain_agent(
+        domain, model=model, workspace_service=workspace_service
+    )
+
+    # [claude] Per-domain ceiling, falling back to the shared default. A
+    # reconciliation legitimately needs more steps than a single count.
+    step_limit = domain.max_steps or MAX_AGENT_STEPS
 
     async def domain_agent_node(state: AgentState):
         """Run the domain agent for the current conversation state."""
@@ -50,7 +64,14 @@ def make_domain_node(domain: Domain, model):
         try:
             result = await agent.ainvoke(
                 {"messages": state["messages"]},
-                config={"recursion_limit": MAX_AGENT_STEPS},
+                config={"recursion_limit": step_limit},
+                # [claude] The workspace id travels as runtime context, not
+                # as part of the message state, so it reaches the tools
+                # without ever being visible to the model as something it
+                # could set. Domains without workspace tools ignore it.
+                context=WorkspaceContext(
+                    workspace_id=state.get("workspace_id")
+                ),
             )
         except GraphRecursionError:
             # [claude] The step ceiling was set but never caught, so hitting
@@ -76,7 +97,7 @@ def make_domain_node(domain: Domain, model):
     return domain_agent_node
 
 
-def build_graph(domain: Domain = DEALS, checkpointer=None):
+def build_graph(domain: Domain = DEALS, checkpointer=None, workspace_service=None):
     """
     Build and compile the read-only graph for one domain.
 
@@ -130,7 +151,9 @@ def build_graph(domain: Domain = DEALS, checkpointer=None):
     node_name = f"{domain.name}_agent"
 
     graph = StateGraph(AgentState)
-    graph.add_node(node_name, make_domain_node(domain, model))
+    graph.add_node(
+        node_name, make_domain_node(domain, model, workspace_service)
+    )
 
     graph.set_entry_point(node_name)
     graph.set_finish_point(node_name)
@@ -247,6 +270,19 @@ def build_leads_studio_graph():
     return build_graph(LEADS, checkpointer=False)
 
 
+def build_workspace_studio_graph():
+    """
+    [claude] Workspace Agent entry point for the API server / Studio.
+
+    Note that a Studio run has no workspace attached unless `workspace_id` is
+    set in the input state, so the file tools will correctly report that
+    nothing is uploaded. That is the honest behaviour rather than a bug —
+    there is no ambient workspace to fall back to, by design.
+    """
+
+    return build_graph(WORKSPACE, checkpointer=False)
+
+
 __all__ = [
     "MAX_AGENT_STEPS",
     "build_graph",
@@ -254,5 +290,6 @@ __all__ = [
     "build_studio_graph",
     "build_supervisor_graph",  # [claude]
     "build_supervisor_studio_graph",  # [claude]
+    "build_workspace_studio_graph",  # [claude]
     "make_domain_node",  # [claude]
 ]

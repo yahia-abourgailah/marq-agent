@@ -24,5 +24,18 @@ class AgentState(TypedDict):
     # gives a follow-up turn a record of who answered last.
     route: NotRequired[str]
 
+    # [claude] Which set of uploaded files this conversation may read.
+    #
+    # Set by the caller when the conversation has a workspace, and passed
+    # down to the workspace tools as LangGraph runtime context. It is state
+    # rather than a tool argument for one reason: a model that could name its
+    # own workspace could name someone else's. The tools take it from here
+    # and nowhere else.
+    #
+    # Optional, so the single-domain graphs and every existing caller keep
+    # working unchanged — absent simply means "no files attached", which the
+    # workspace tools report as such.
+    workspace_id: NotRequired[str]
+
 
 __all__ = ["AgentState"]

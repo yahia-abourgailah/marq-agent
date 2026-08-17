@@ -49,6 +49,33 @@ class Settings(BaseSettings):
     qdrant_url: str
     qdrant_collection: str
 
+    # [claude] Workspace — user-uploaded files.
+    #
+    # All three are optional with defaults, so existing environment files
+    # keep working unchanged.
+    #
+    # `workspace_root` holds uploaded files and their parsed content. It is
+    # deliberately outside the repository tree by default: uploads contain
+    # customer data, and a directory under the working tree is one `git add
+    # -A` away from being committed.
+    workspace_root: str = "./var/workspace"
+
+    # Separate from `qdrant_collection` on purpose. That one is reserved for
+    # CRM-derived vectors; mixing user uploads into it would make the
+    # per-workspace payload filter the only thing separating a user's files
+    # from application data.
+    workspace_collection: str = "marq_workspace"
+
+    # [claude] Embedded-Qdrant directory, used only when qdrant_url is empty.
+    # Lets local development run without a Qdrant server; see build_index().
+    # Not a production configuration — set QDRANT_URL instead.
+    qdrant_path: str = "./var/qdrant"
+
+    # Multilingual on purpose — see app/workspace/embeddings.py.
+    embedding_model: str = (
+        "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    )
+
     model_name: str
     model_base_url: str
     model_api_key: str

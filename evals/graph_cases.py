@@ -18,6 +18,7 @@ assert on tool usage and the final answer.
 from __future__ import annotations
 
 import asyncio
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -38,6 +39,31 @@ class GraphCase:
     max_tool_calls: int = 4
     why: str = ""
     tags: tuple[str, ...] = field(default_factory=tuple)
+
+    # [claude] Which uploaded files the turn may read. The workspace agent
+    # needs one; every other domain ignores it.
+    workspace_id: str | None = None
+
+    # [claude] Assertions on *which* tools ran, not just how many.
+    #
+    # Counting calls cannot express the property that matters most in the
+    # workspace: that a total came from workspace_aggregate rather than from
+    # workspace_search. Both are one call, and only one of them is right —
+    # a number recalled from retrieved passages is a sample presented as a
+    # fact, and it looks entirely reasonable in the answer.
+    tools_include: tuple[str, ...] = ()
+    tools_exclude: tuple[str, ...] = ()
+
+    # [claude] A scalar query whose result must appear in the answer.
+    #
+    # Added because two cases hardcoded row counts and went stale: the
+    # fixture pins its rows at load time while CURRENT_DATE keeps moving, so
+    # "69 leads in the last 60 days" quietly became 62 and the eval started
+    # failing a correct answer. Deriving the expectation from the same
+    # database the agent queried keeps the assertion honest as the fixture
+    # ages — the eval-side form of the rule against putting database values
+    # in prompts.
+    expected_from_sql: str | None = None
 
 
 GRAPH_CASES: tuple[GraphCase, ...] = (
@@ -88,7 +114,16 @@ GRAPH_CASES: tuple[GraphCase, ...] = (
     GraphCase(
         name="explicit_window_is_not_widened",
         question="How many deals are closing in the next 30 days?",
-        answer_contains=("17",),
+        # [claude] Was the literal "17". The fixture emits dates as
+        # CURRENT_DATE ± INTERVAL at load time, so its rows are pinned while
+        # CURRENT_DATE keeps moving — the window slides and the literal goes
+        # stale, failing a correct answer. Derived from the database instead.
+        expected_from_sql=(
+            "SELECT count(*) FROM deals "
+            "WHERE deleted_at IS NULL "
+            "AND expected_closing_date BETWEEN CURRENT_DATE "
+            "AND CURRENT_DATE + INTERVAL '30 days'"
+        ),
         answer_excludes=("96", "106"),
         max_tool_calls=2,
         why=(
@@ -180,6 +215,52 @@ GRAPH_CASES: tuple[GraphCase, ...] = (
 
 LEADS_GRAPH_CASES: tuple[GraphCase, ...] = (
     GraphCase(
+        name="deals_have_no_staleness_to_report",
+        question="Which deals are stale?",
+        # [claude] This assertion has now been wrong twice, in both
+        # directions, which is the lesson worth keeping: the refusal's
+        # *wording* moved as the catalogue rule improved, while the property
+        # never did. Anchor on the substance — staleness belongs to leads —
+        # and on the absence of an invented per-deal figure.
+        answer_contains=("lead",),
+        # `is_stale` exists on leads and has no deals equivalent. The agent
+        # once answered this by deriving a staleness rule from date columns
+        # and reporting it as a CRM metric — a fabricated measure is worse
+        # than a refusal, because the user cannot tell.
+        answer_excludes=("stale deals are", "days since", "no activity in"),
+        max_tool_calls=2,
+        why=(
+            "Deals have no staleness concept. Saying so is the answer; "
+            "deriving one from dates invents a metric the CRM does not have."
+        ),
+        tags=("refusal", "invention"),
+    ),
+    GraphCase(
+        name="vague_franchise_question_uses_real_metrics",
+        question="Which franchises should we worry about?",
+        answer_contains=("franchise",),
+        # [claude] Was answer_excludes=("stale",), which failed a correct
+        # answer once the invented metric was fixed. "Stale leads by
+        # franchise" is real — leads genuinely carry is_stale, and franchise
+        # 6 really does have 19 — and it is a good answer to a vague
+        # question. Only the *deals* version was ever fabricated, so exclude
+        # that and nothing more.
+        answer_excludes=("stale deals",),
+        min_tool_calls=1,
+        # [claude] Deliberately loose. "Which franchises should we worry
+        # about" is an open question and several queries is a reasonable way
+        # to answer it — a run took five and was right. This case is about
+        # what the agent invents, not how many calls it spends; tightening
+        # the ceiling here only fails correct answers.
+        max_tool_calls=6,
+        why=(
+            "A vague question must be answered from columns that exist — "
+            "cancellations, status mix — not from an invented staleness "
+            "measure. This is where the fabricated metric surfaced."
+        ),
+        tags=("invention",),
+    ),
+    GraphCase(
         name="leads_stage_breakdown",
         domain="leads",
         question="How many leads are in each stage?",
@@ -230,10 +311,43 @@ LEADS_GRAPH_CASES: tuple[GraphCase, ...] = (
         tags=("leads",),
     ),
     GraphCase(
+        name="leads_conversion_by_response_speed_is_a_rate",
+        domain="leads",
+        question="What is the conversion rate by response speed?",
+        # The fast bucket's rate, derived rather than pinned.
+        expected_from_sql=(
+            "SELECT round(100.0 * count(converted_at) / count(*), 2) "
+            "FROM leads "
+            "WHERE deleted_at IS NULL "
+            "AND response_time_minutes IS NOT NULL "
+            "AND response_time_minutes <= 60"
+        ),
+        # [claude] The wrong-answer signature. Dividing each bucket's
+        # conversions by all conversions gives shares that sum to 100% —
+        # 1.28 / 98.72 here — which answers "where do conversions come from"
+        # rather than "does responding faster convert better". The agent
+        # reported exactly that shape before the catalogue rule landed.
+        answer_excludes=("1.28", "98.72", "99.89", "0.11"),
+        max_tool_calls=2,
+        why=(
+            "A rate per bucket, not a share of the converted. The "
+            "denominator is the leads in that bucket."
+        ),
+        tags=("leads", "metrics", "denominator"),
+    ),
+    GraphCase(
         name="leads_explicit_window_survives",
         domain="leads",
         question="How many leads were created in the last 60 days?",
-        answer_contains=("69",),
+        # [claude] Was the literal "69", which is what a 63-day window gives
+        # today — the fixture had aged three days past the count baked in
+        # here, so the eval failed a correct answer of 62. See
+        # explicit_window_is_not_widened above.
+        expected_from_sql=(
+            "SELECT count(*) FROM leads "
+            "WHERE deleted_at IS NULL "
+            "AND created_at >= CURRENT_DATE - INTERVAL '60 days'"
+        ),
         answer_excludes=("884",),
         max_tool_calls=2,
         why="Dropping the window would silently answer for all leads.",
@@ -245,16 +359,62 @@ LEADS_GRAPH_CASES: tuple[GraphCase, ...] = (
 GRAPH_CASES = GRAPH_CASES + LEADS_GRAPH_CASES
 
 
+async def scalar(query: str) -> str:
+    """[claude] Run a one-value query, for expectations derived at eval time."""
+
+    from app.db.connection import app_db
+
+    await app_db.connect()
+
+    async with app_db.connection() as conn:
+        async with conn.cursor() as cursor:
+            await cursor.execute(query)
+            row = await cursor.fetchone()
+
+    # Dict row factory on the pool, so take the single value whatever it is
+    # called rather than indexing by position.
+    value = next(iter(row.values())) if hasattr(row, "values") else row[0]
+
+    # Render whole numbers without a trailing .0, which is how the agent
+    # will have written them.
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+
+    return str(value)
+
+
 async def evaluate(case: GraphCase, graph) -> tuple[bool, str]:
+    state: dict = {"messages": [{"role": "user", "content": case.question}]}
+
+    if case.workspace_id:
+        state["workspace_id"] = case.workspace_id
+
     result = await graph.ainvoke(
-        {"messages": [{"role": "user", "content": case.question}]},
+        state,
         config={"configurable": {"thread_id": f"eval-{case.name}"}},
     )
 
     messages = result["messages"]
     tool_calls = sum(1 for m in messages if getattr(m, "type", "") == "tool")
+
+    used = [
+        call["name"]
+        for message in messages
+        for call in getattr(message, "tool_calls", []) or []
+    ]
+
     answer = str(messages[-1].content)
     lowered = answer.lower()
+
+    # [claude] Agents write 4,665 where a case asserts 4665, and a thousands
+    # separator is not a wrong answer. Matching against both forms stops
+    # every numeric expectation from depending on how the model chose to
+    # format it — this failed a correct answer the first time it ran.
+    unseparated = re.sub(r"(?<=\d),(?=\d)", "", lowered)
+
+    def present_in_answer(needle: str) -> bool:
+        needle = needle.lower()
+        return needle in lowered or needle in unseparated
 
     problems = []
 
@@ -264,7 +424,20 @@ async def evaluate(case: GraphCase, graph) -> tuple[bool, str]:
             f"{case.min_tool_calls}-{case.max_tool_calls}"
         )
 
-    missing = [s for s in case.answer_contains if s not in lowered]
+    absent = [name for name in case.tools_include if name not in used]
+    if absent:
+        problems.append(f"did not call {absent} (called {used})")
+
+    banned = [name for name in case.tools_exclude if name in used]
+    if banned:
+        problems.append(f"must not call {banned} (called {used})")
+
+    expected = list(case.answer_contains)
+
+    if case.expected_from_sql:
+        expected.append(await scalar(case.expected_from_sql))
+
+    missing = [s for s in expected if not present_in_answer(s)]
     if missing:
         problems.append(f"answer missing {missing}")
 

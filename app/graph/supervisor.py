@@ -18,13 +18,21 @@ How the boundary falls
 ----------------------
 The two domains are not symmetric, and that decides most routes:
 
-    DEALS  sees deals, leads and users
-    LEADS  sees leads and users
+    DEALS      sees deals, leads and users
+    LEADS      sees leads and users
+    WORKSPACE  sees deals, leads and users — plus the user's uploaded files
 
 So a question spanning both — "which lead sources produce the most contracted
 deals" — goes to DEALS, which is the only agent that can join them. LEADS
 gets the questions that live entirely in the funnel. This is why there is no
 "cannot answer, it spans two domains" outcome: the overlap is already covered.
+
+[claude] WORKSPACE extends the same reasoning one level up. It holds the CRM
+superset *and* the uploaded files, so it is the only agent that can answer
+"does my spreadsheet agree with the CRM". That makes it the first test in the
+routing order rather than the last: a reconciliation question mentions deals
+too, and whichever domain is checked first would otherwise claim it and
+answer half of it convincingly.
 """
 
 from __future__ import annotations
@@ -38,9 +46,14 @@ from langchain_core.messages import AIMessage, AnyMessage
 # database round-trip discovering it cannot answer.
 DEALS_ROUTE = "deals"
 LEADS_ROUTE = "leads"
+WORKSPACE_ROUTE = "workspace"
 OUT_OF_SCOPE = "out_of_scope"
 
-VALID_ROUTES = (DEALS_ROUTE, LEADS_ROUTE, OUT_OF_SCOPE)
+# [claude] WORKSPACE_ROUTE is listed before the CRM domains because
+# parse_route() matches in order and the workspace agent is the only one that
+# can see both an uploaded file and the CRM. A question naming both must not
+# be claimed by whichever route happens to be checked first.
+VALID_ROUTES = (WORKSPACE_ROUTE, DEALS_ROUTE, LEADS_ROUTE, OUT_OF_SCOPE)
 
 # DEALS is the superset domain, so it is the safe landing place when the
 # classifier returns something unparseable.
@@ -68,6 +81,15 @@ Reply with exactly one word and nothing else:
                  and SLA, qualification and scoring, duplicates, campaigns
                  and utm sources, lead conversion.
 
+  workspace      The question refers to a file the user uploaded — a
+                 spreadsheet, an Excel or CSV file, a PDF, a document, a
+                 report, "my file", "my sheet", "the attachment", "the data
+                 I sent", "this contract".
+
+                 Also choose workspace for anything comparing, reconciling,
+                 checking or matching an uploaded file against the CRM.
+                 Only the workspace specialist can see both.
+
   out_of_scope   The question has nothing to do with the CRM at all — the
                  weather, general knowledge, chit-chat, writing tasks.
 
@@ -78,7 +100,17 @@ Reply with exactly one word and nothing else:
 
 Deciding — work down this list and stop at the first match:
 
-1. Does the question involve deals at all — deals, contracts, closings,
+1. Does the question refer to an uploaded file at all — a sheet, a
+   spreadsheet, a document, a PDF, an attachment, "my data"?  -> workspace
+
+   This wins even when the question is mostly about deals or leads.
+   "Does my sheet match our contracted deals", "check this list against the
+   CRM", "how do the numbers in my file compare" all need the file and the
+   CRM together, and only the workspace specialist has both. Sending them to
+   deals gets an answer about the CRM alone, which looks right and silently
+   ignores half the question.
+
+2. Does the question involve deals at all — deals, contracts, closings,
    reservations, pipeline — even alongside leads?  -> deals
 
    This wins even when the thing being counted is a lead. "How many leads
@@ -87,16 +119,17 @@ Deciding — work down this list and stop at the first match:
    has it. Sending them to leads gets a refusal from an agent that cannot
    see deals, which reads to the user as though the data does not exist.
 
-2. Is it entirely about leads, with deals never mentioned or implied?
+3. Is it entirely about leads, with deals never mentioned or implied?
    -> leads
 
-3. Is there no CRM subject at all?  -> out_of_scope
+4. Is there no CRM subject at all?  -> out_of_scope
 
-4. Does it mention neither by name and continue the previous turn?
+5. Does it mention none of them by name and continue the previous turn?
    -> stay with the specialist that answered last
 
-Rule 1 outranks rule 4: if a follow-up brings deals into a leads
-conversation, it moves to deals.
+Rules 1 and 2 outrank rule 5: if a follow-up brings a file into a deals
+conversation it moves to workspace, and if it brings deals into a leads
+conversation it moves to deals.
 
 Restricted or unavailable data is NOT out_of_scope. If the subject is a CRM
 thing — a deal, a lead, a franchise, a project, a stage, a source, a user —
@@ -109,12 +142,17 @@ The specialist explains what it cannot provide; that is its job, not yours.
 
 Reserve out_of_scope for questions with no CRM subject at all.
 
-Reply with one word: deals, leads, or out_of_scope."""
+An uploaded file the user believes exists is never out_of_scope either. If
+they refer to a file, route to workspace; that specialist reports when there
+is nothing uploaded.
+
+Reply with one word: deals, leads, workspace, or out_of_scope."""
 
 
 OUT_OF_SCOPE_REPLY = (
-    "I can only help with MarQ CRM data — deals and leads. Ask me about "
-    "pipeline, lead sources, stages or response times and I'll take a look."
+    "I can only help with MarQ CRM data — deals and leads — and files you "
+    "upload. Ask me about pipeline, lead sources, stages or response times, "
+    "or point me at a spreadsheet or document, and I'll take a look."
 )
 
 
@@ -186,6 +224,7 @@ __all__ = [
     "OUT_OF_SCOPE_REPLY",
     "SUPERVISOR_PROMPT",
     "VALID_ROUTES",
+    "WORKSPACE_ROUTE",  # [claude]
     "choose_route",
     "out_of_scope_message",
     "parse_route",
