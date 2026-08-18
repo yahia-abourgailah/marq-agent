@@ -37,6 +37,7 @@ answer half of it convincingly.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from langchain_core.messages import AIMessage, AnyMessage
@@ -156,6 +157,19 @@ OUT_OF_SCOPE_REPLY = (
 )
 
 
+# [claude] Punctuation a one-word reply arrives wrapped in: "deals.",
+# "**workspace**", "leads,".
+_TRIM = ".,:;!?\"'`*_ \t\n"
+
+# A route name the classifier explicitly ruled out. Matched with a small
+# window so "not a deals question" and "no workspace file" both count, while
+# an unrelated "not" earlier in the sentence does not reach across.
+_NEGATED = re.compile(
+    r"\b(?:not|no|never|isn'?t|aren'?t|rather\s+than|instead\s+of)\b"
+    r"[^.;!?]{0,20}?\b(" + "|".join(VALID_ROUTES) + r")\b"
+)
+
+
 def parse_route(text: str) -> str:
     """
     Map raw classifier output onto a valid route.
@@ -167,10 +181,49 @@ def parse_route(text: str) -> str:
 
     lowered = str(text).strip().lower()
 
-    for route in VALID_ROUTES:
-        if route in lowered:
-            return route
+    # [claude] 1. The token on its own, punctuation trimmed.
+    #
+    # This is the path the classifier takes almost every time, and the only
+    # one the 37 routing cases exercised. Everything below exists for the
+    # times it does not — which the handoff notes are exactly the times
+    # vLLM's batching makes decoding non-reproducible.
+    token = lowered.strip(_TRIM)
 
+    if token in VALID_ROUTES:
+        return token
+
+    # 2. Drop negated mentions before matching anything.
+    #
+    # Substring matching in tuple order used to resolve any prose reply to
+    # whichever route name came first in VALID_ROUTES, so "Not a deals
+    # question — route to leads" returned deals. Position cannot fix it:
+    # that reply wants the *last* mention while "This is about leads, not
+    # deals." wants the *first*. What actually distinguishes them is the
+    # negation, so the negated span is removed and whatever survives is the
+    # classifier's real answer.
+    remaining = _NEGATED.sub(" ", lowered)
+
+    # 3. out_of_scope wins over anything still standing.
+    #
+    # It is the one route name that cannot appear incidentally inside
+    # another, and misrouting an off-topic question into a full CRM agent is
+    # the more expensive mistake — it costs a database round-trip to
+    # discover what a one-line decline already knew.
+    if OUT_OF_SCOPE in remaining:
+        return OUT_OF_SCOPE
+
+    # 4. The earliest surviving mention.
+    positions = [
+        (remaining.index(route), route)
+        for route in VALID_ROUTES
+        if route in remaining
+    ]
+
+    if positions:
+        return min(positions)[1]
+
+    # 5. Nothing recognisable. DEALS is the superset domain, so it is the
+    # least-wrong landing place.
     return FALLBACK_ROUTE
 
 

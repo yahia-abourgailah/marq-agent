@@ -133,3 +133,80 @@ def test_studio_entry_points_build():
         build_supervisor_studio_graph,
     ):
         assert build() is not None
+
+
+# ============================================================
+# [claude] parse_route on prose replies.
+#
+# It used to substring-match in VALID_ROUTES order, so any reply that was not
+# a bare word resolved to whichever route name appeared earliest in the tuple
+# rather than the one the classifier chose. out_of_scope could never win
+# against a reply naming another route, so an off-topic question ran a full
+# CRM agent instead of declining in one line.
+#
+# The 37 routing eval cases all passed because they exercise the one-word
+# path — which the model does take almost always, and which the handoff notes
+# is least reliable exactly when vLLM's batching makes decoding
+# non-reproducible.
+# ============================================================
+
+
+@pytest.mark.parametrize(
+    ("reply", "expected"),
+    [
+        # Position cannot settle these two: the first wants the last mention,
+        # the second wants the first. The negation is what distinguishes them.
+        ("Not a deals question — route to leads", "leads"),
+        ("This is about leads, not deals.", "leads"),
+        ("out_of_scope: I can't help with deals data", "out_of_scope"),
+        ("no workspace file; this is a leads question", "leads"),
+        ("This is a workspace question, not deals", "workspace"),
+        ("I'd say leads rather than deals", "leads"),
+        ("not workspace, not leads — deals", "deals"),
+        ("This is chit-chat, so out_of_scope", "out_of_scope"),
+    ],
+)
+def test_prose_replies_resolve_to_the_route_the_classifier_meant(
+    reply, expected
+):
+    assert parse_route(reply) == expected
+
+
+@pytest.mark.parametrize(
+    ("reply", "expected"),
+    [
+        ("deals", "deals"),
+        ("leads", "leads"),
+        ("workspace", "workspace"),
+        ("out_of_scope", "out_of_scope"),
+        ("  DEALS.  ", "deals"),
+        ("Deals", "deals"),
+        ("Route: leads", "leads"),
+        ("**workspace**", "workspace"),
+        ("leads\n", "leads"),
+    ],
+)
+def test_the_one_word_path_still_works(reply, expected):
+    """The path the classifier actually takes, and the eval cases exercise."""
+
+    assert parse_route(reply) == expected
+
+
+@pytest.mark.parametrize("reply", ["", "   ", "???", "I have no idea", "🙂"])
+def test_unrecognisable_replies_fall_back_to_the_superset_domain(reply):
+    assert parse_route(reply) == FALLBACK_ROUTE
+
+
+def test_out_of_scope_is_reachable_from_prose():
+    """
+    The regression that mattered most: out_of_scope could never win, so an
+    off-topic question cost a database round-trip to discover what a one-line
+    decline already knew.
+    """
+
+    for reply in (
+        "out_of_scope",
+        "out_of_scope — not a deals question",
+        "I think this is out_of_scope",
+    ):
+        assert parse_route(reply) == OUT_OF_SCOPE
