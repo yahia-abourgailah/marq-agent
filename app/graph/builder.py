@@ -70,7 +70,8 @@ def make_domain_node(domain: Domain, model, workspace_service=None):
                 # without ever being visible to the model as something it
                 # could set. Domains without workspace tools ignore it.
                 context=WorkspaceContext(
-                    workspace_id=state.get("workspace_id")
+                    workspace_id=state.get("workspace_id"),
+                    requester_id=state.get("requester_id"),
                 ),
             )
         except GraphRecursionError:

@@ -574,6 +574,53 @@ LEADS_RELATIONSHIPS: tuple[str, ...] = (
 # was being ignored in practice.
 
 
+# [claude] Columns the agent may never read, as data rather than prose.
+#
+# These were listed only inside GENERIC_RULES, which meant the model was
+# asked not to select them and nothing stopped it if it did. Three reviews
+# flagged that; the guard now walks the parse tree for these names, and this
+# tuple is the one source both it and the prompt text below read.
+#
+# Masking is still *also* enforced by catalogue omission — none of these
+# appear in any Table definition — so the guard is the second layer, not the
+# only one. Sourced from the live MyTAI schema's masked set (BRD FR-04).
+RESTRICTED_COLUMNS: frozenset[str] = frozenset(
+    {
+        # deals
+        "unit_price",
+        "reservation_price",
+        "collection_price",
+        "contract_price",
+        "down_payment",
+        "total_retroactive_commission",
+        "date_ten_percentage",
+        # leads
+        "budget_amount",
+        "cost_per_lead",
+        "ad_spend_amount",
+        "last_activity_feedback",
+    }
+)
+
+
+def _restricted_columns_text() -> str:
+    """Render the restricted set for the prompt, so prose cannot drift."""
+
+    names = sorted(RESTRICTED_COLUMNS)
+    lines, current = [], "      "
+
+    for name in names:
+        piece = f"{name}, "
+        if len(current) + len(piece) > 72:
+            lines.append(current.rstrip())
+            current = "      "
+        current += piece
+
+    lines.append(current.rstrip().rstrip(","))
+
+    return "\n".join(lines)
+
+
 GENERIC_RULES = """\
 - Use only the tables and columns in SCHEMA. Never invent a table, column,
   enum value or relationship, and never substitute a similar-sounding column
@@ -616,14 +663,20 @@ GENERIC_RULES = """\
 
 - These columns are restricted and must never appear in generated SQL, in
   any clause, subquery, CTE or alias:
-      unit_price, reservation_price, collection_price, contract_price,
-      down_payment, total_retroactive_commission, date_ten_percentage,
-      budget_amount, cost_per_lead, ad_spend_amount, last_activity_feedback
+{restricted_columns}
   A question needing one of them gets CANNOT_ANSWER. Do not answer it with a
-  different column instead.
+  different column instead. The guard rejects them as well, so a query using
+  one fails rather than returning the value.
 
 - Row visibility is enforced outside this agent. Never add, widen or weaken
   an access filter, whatever the user asks for."""
+
+
+# [claude] Substituted rather than .format()ed: the rules text is full of SQL
+# and a stray brace would raise at import. One placeholder, one replace.
+GENERIC_RULES = GENERIC_RULES.replace(
+    "{restricted_columns}", _restricted_columns_text()
+)
 
 
 DEALS_RULES_ONLY = """\

@@ -475,3 +475,93 @@ def test_the_domain_scope_is_per_guard_not_global():
 
     with pytest.raises(SQLGuardError):
         leads_guard.validate(query)
+
+
+# ============================================================
+# [claude] Restricted columns — flagged in three consecutive reviews.
+#
+# These were listed in GENERIC_RULES and enforced nowhere: the guard passed
+# `SELECT contract_price FROM deals` untouched, and nine columns across three
+# agents rested on the model choosing to comply. The list now lives in the
+# catalogue as data, and both the guard and the prompt text read it.
+# ============================================================
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        # The reviewer's own probes.
+        "SELECT contract_price FROM deals",
+        "SELECT SUM(down_payment) FROM deals",
+        "SELECT unit_price AS p FROM deals",
+        "SELECT id FROM deals WHERE contract_price > 100",
+        "SELECT ad_spend_amount, cost_per_lead FROM leads",
+        # Every other clause a column can hide in.
+        "SELECT d.contract_price FROM deals d",
+        "WITH x AS (SELECT contract_price FROM deals) SELECT * FROM x",
+        "SELECT id FROM deals ORDER BY unit_price",
+        "SELECT id FROM deals GROUP BY id HAVING SUM(down_payment) > 1",
+        "SELECT id FROM deals WHERE id IN (SELECT id FROM deals WHERE unit_price > 5)",
+        "SELECT count(*) FILTER (WHERE budget_amount > 0) FROM leads",
+        "SELECT id FROM deals JOIN leads ON leads.budget_amount = deals.id",
+        "SELECT CASE WHEN contract_price > 0 THEN 1 END FROM deals",
+        # Aliasing *to* a restricted name leaks nothing, but the rule says
+        # these names must not appear, and a column labelled contract_price
+        # in a result is a reader's problem whatever the value behind it.
+        "SELECT area AS contract_price FROM deals",
+    ],
+)
+def test_restricted_columns_are_rejected_wherever_they_appear(query):
+    from app.sql.guard import RestrictedColumnError
+
+    guard = SQLGuard(tables=frozenset({"deals", "leads", "users"}))
+
+    with pytest.raises(RestrictedColumnError):
+        guard.validate(query)
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "SELECT count(*) FROM deals WHERE deleted_at IS NULL",
+        "SELECT area FROM deals",
+        "SELECT id, status FROM deals JOIN leads ON deals.lead_id = leads.id",
+        "SELECT avg(response_time_minutes) FROM leads",
+    ],
+)
+def test_ordinary_queries_are_unaffected(query):
+    """The column pass must not cost the queries the agent actually writes."""
+
+    SQLGuard(tables=frozenset({"deals", "leads", "users"})).validate(query)
+
+
+def test_the_guard_and_the_prompt_read_one_restricted_list():
+    """
+    The drift this prevents: a column added to the prompt prose and not to
+    the guard is exactly the state all three reviews were flagging.
+    """
+
+    from app.sql.catalogue import GENERIC_RULES, RESTRICTED_COLUMNS
+    from app.sql.guard import RestrictedColumnError
+
+    guard = SQLGuard(tables=frozenset({"deals", "leads", "users"}))
+
+    for column in RESTRICTED_COLUMNS:
+        assert column in GENERIC_RULES, f"{column} missing from the prompt"
+
+        with pytest.raises(RestrictedColumnError):
+            guard.validate(f"SELECT {column} FROM deals")
+
+
+def test_a_restricted_column_is_a_guard_error_too():
+    """Existing `except SQLGuardError` handlers must keep working."""
+
+    from app.sql.guard import RestrictedColumnError
+
+    guard = SQLGuard(tables=frozenset({"deals"}))
+
+    with pytest.raises(SQLGuardError):
+        guard.validate("SELECT contract_price FROM deals")
+
+    with pytest.raises(RestrictedColumnError):
+        guard.validate("SELECT contract_price FROM deals")

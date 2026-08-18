@@ -78,6 +78,12 @@ class WorkspaceContext:
 
     workspace_id: str | None = None
 
+    # [claude] The employee on whose behalf the turn runs. Lives here rather
+    # than in a second context object because LangGraph carries one
+    # `context` per invocation, and both values are the same kind of thing:
+    # request identity the model must not be able to set.
+    requester_id: str | None = None
+
 
 def _workspace_id(runtime: ToolRuntime) -> str:
     context = getattr(runtime, "context", None)

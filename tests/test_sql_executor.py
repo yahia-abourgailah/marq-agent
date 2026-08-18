@@ -24,12 +24,29 @@ class FakeCursor:
         pass
 
 
+class FakeTransaction:
+    """
+    [claude] The executor now wraps each query in an explicit transaction so
+    `SET LOCAL app.requester_id` is scoped to that statement and cannot leak
+    to the next borrower of a pooled connection.
+    """
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        pass
+
+
 class FakeConnection:
     def __init__(self, cursor):
         self.cursor_instance = cursor
 
     def cursor(self):
         return self.cursor_instance
+
+    def transaction(self, *args, **kwargs):
+        return FakeTransaction()
 
 
 class FakeConnectionContext:

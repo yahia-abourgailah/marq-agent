@@ -12,7 +12,7 @@ class FakeSQLAgent:
 
 
 class FakeRepository:
-    async def execute_read(self, query, params=()):
+    async def execute_read(self, query, params=(), requester_id=None):
         assert query == "SELECT COUNT(*) FROM deals;"
         return [{"count": 42}]
 
@@ -92,7 +92,7 @@ async def test_guard_rejection_is_retryable(monkeypatch):
         return Sql(query="SELECT * FROM pg_authid")
 
     class RejectingRepository:
-        async def execute_read(self, query, params=()):
+        async def execute_read(self, query, params=(), requester_id=None):
             raise SQLGuardError("Table 'pg_authid' is not allowed.")
 
     monkeypatch.setattr("app.tools.sql.generate_sql", fake_generate_sql)
@@ -119,7 +119,7 @@ async def test_infrastructure_error_is_not_retryable_and_leaks_nothing(
         return Sql(query="SELECT COUNT(*) FROM deals;")
 
     class BrokenRepository:
-        async def execute_read(self, query, params=()):
+        async def execute_read(self, query, params=(), requester_id=None):
             raise ConnectionError(
                 "connection to host=10.0.0.1 user=secret_user failed"
             )
@@ -184,7 +184,7 @@ async def test_trimming_is_reported_to_the_agent(monkeypatch):
         return Sql(query="SELECT * FROM deals")
 
     class WideRepository:
-        async def execute_read(self, query, params=()):
+        async def execute_read(self, query, params=(), requester_id=None):
             return wide
 
     monkeypatch.setattr("app.tools.sql.generate_sql", fake_generate_sql)
@@ -219,7 +219,7 @@ async def test_out_of_domain_table_is_reported_as_not_available(monkeypatch):
     monkeypatch.setattr("app.tools.sql.generate_sql", fake_generate_sql)
 
     class RejectingRepository:
-        async def execute_read(self, query, params=()):
+        async def execute_read(self, query, params=(), requester_id=None):
             raise TableNotAllowedError("Table 'deals' is not allowed.")
 
     tool = SQLTool(
@@ -244,7 +244,7 @@ async def test_other_guard_rejections_stay_retryable(monkeypatch):
     monkeypatch.setattr("app.tools.sql.generate_sql", fake_generate_sql)
 
     class RejectingRepository:
-        async def execute_read(self, query, params=()):
+        async def execute_read(self, query, params=(), requester_id=None):
             raise SQLGuardError("Function 'PG_SLEEP' is not allowed.")
 
     tool = SQLTool(sql_agent=FakeSQLAgent(), repository=RejectingRepository())

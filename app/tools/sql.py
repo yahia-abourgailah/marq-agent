@@ -7,11 +7,17 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from langchain.tools import ToolRuntime
 from langchain_core.tools import tool
 
 from app.db.repositories.sql import SQLRepository
 from app.sql.agent import Refused, generate_sql
-from app.sql.guard import MAX_ROWS, SQLGuardError, TableNotAllowedError
+from app.sql.guard import (
+    MAX_ROWS,
+    RestrictedColumnError,
+    SQLGuardError,
+    TableNotAllowedError,
+)
 
 # [claude] Serialised-payload ceiling for one tool result, in characters.
 # Roughly 5,000 tokens at ~4 chars/token — enough for a wide sample or a few
@@ -72,6 +78,7 @@ class SQLTool:
     async def query(
         self,
         question: str,
+        requester_id: str | None = None,
     ) -> dict[str, Any]:
         """
         Generate and execute a read-only SQL query.
@@ -108,7 +115,10 @@ class SQLTool:
                     "error": generated.reason,
                 }
 
-            rows = await self.repository.execute_read(generated.query)
+            rows = await self.repository.execute_read(
+                generated.query,
+                requester_id=requester_id,
+            )
 
             rows_available = len(rows)
 
@@ -138,6 +148,18 @@ class SQLTool:
                 "rows_available": rows_available,  # [claude]
                 "truncated": truncated,
                 "max_rows": MAX_ROWS,
+            }
+
+        except RestrictedColumnError as exc:
+            # [claude] A masked column. Like a table rejection this can never
+            # succeed on a retry — the column is withheld by policy, not by
+            # phrasing — so it is reported as `not_available`, which the
+            # prompts already tell the agent to relay in one sentence.
+            return {
+                "success": False,
+                "retryable": False,
+                "reason": "not_available",
+                "error": str(exc),
             }
 
         except TableNotAllowedError as exc:
@@ -198,6 +220,7 @@ def build_sql_tool(
     @tool
     async def sql_query(
         question: str,
+        runtime: ToolRuntime,
     ) -> dict[str, Any]:
         """
         Retrieve CRM data for a natural-language question.
@@ -205,7 +228,16 @@ def build_sql_tool(
         This is a read-only database retrieval capability.
         """
 
-        return await service.query(question)
+        # [claude] The requester comes from runtime context, never from the
+        # model. It is taken here rather than being a tool argument for the
+        # same reason workspace_id is: an argument is something the model can
+        # choose, and a prompt-injected file could choose someone else.
+        context = getattr(runtime, "context", None)
+
+        return await service.query(
+            question,
+            requester_id=getattr(context, "requester_id", None),
+        )
 
     return sql_query
 

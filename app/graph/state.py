@@ -37,5 +37,17 @@ class AgentState(TypedDict):
     # workspace tools report as such.
     workspace_id: NotRequired[str]
 
+    # [claude] Which employee the question is being asked on behalf of.
+    #
+    # Travels the same path as workspace_id and for the same reason: a model
+    # that could name its own requester could name someone else's, so it is
+    # never a tool argument. Reaches SQLExecutor, which publishes it as
+    # `app.requester_id` for row-level security to filter on.
+    #
+    # Optional, and absent means unset rather than empty — a policy can tell
+    # the difference and refuse, where an empty string would silently match
+    # nothing and look like it was working.
+    requester_id: NotRequired[str]
+
 
 __all__ = ["AgentState"]

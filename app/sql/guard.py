@@ -9,11 +9,22 @@ from dataclasses import dataclass
 import sqlglot
 from sqlglot import expressions as exp
 
-from app.sql.catalogue import get_catalogue
+from app.sql.catalogue import RESTRICTED_COLUMNS, get_catalogue
 
 
 class SQLGuardError(ValueError):
     """Raised when generated SQL is not safe to execute."""
+
+
+class RestrictedColumnError(SQLGuardError):
+    """
+    [claude] The query named a column the agent may never read.
+
+    Separate from a plain guard rejection for the same reason
+    TableNotAllowedError is: rephrasing cannot help. The column is masked by
+    policy, so the agent must relay that and stop rather than try again with
+    different wording.
+    """
 
 
 class TableNotAllowedError(SQLGuardError):
@@ -132,21 +143,34 @@ class SQLGuard:
 
     Security boundaries
     -------------------
-    The Guard is NOT the authoritative database security layer.
+    [claude] This section used to describe a system that did not exist. It
+    stated that a read-only role prevented modification and that RLS decided
+    row access; `marq_agent_ro` was a login role with no grants, RLS was
+    enabled on nothing, and the application connected as the table owner.
+    Three reviews flagged it. What follows is what is actually true today.
 
-    PostgreSQL permissions enforce database-level permissions.
+        Guard            query safety, and restricted columns
+        PostgreSQL role  writes, WHEN the role is configured
+        RLS              row access — NOT YET IN FORCE
 
-    The PostgreSQL read-only role (`marq_agent_ro`) prevents the
-    application from modifying CRM data.
+    **Read-only role — in force when configured.**
+    `migrations/001_read_only_role.sql` grants `marq_agent_ro` SELECT on
+    exactly the catalogue tables and revokes everything else. Set
+    `POSTGRES_READONLY_USER` / `POSTGRES_READONLY_PASSWORD` and the pool
+    connects as it, so a query the guard wrongly admitted still cannot
+    write. Leave them unset and the application connects as the owner, in
+    which case this guard is the only thing between generated SQL and the
+    data. `Database.verify_read_only()` reports which is true at runtime
+    rather than trusting the setting.
 
-    PostgreSQL Row-Level Security (RLS) determines which rows the
-    authenticated user is actually allowed to access.
-
-    Therefore:
-
-        Guard  -> query safety
-        PostgreSQL role -> database permissions
-        RLS -> row-level authorization
+    **Row-level security — not in force.**
+    No policies exist. `requester_id` now travels from the request into the
+    session (see `SQLExecutor`), so the identity a policy would filter on is
+    finally available — but `migrations/002_row_level_security.sql` is
+    deliberately not applied, because enabling RLS without policies denies
+    every row and enabling it with a permissive policy looks like protection
+    and provides none. Until it is applied, **every user of this agent can
+    read every row of every table in the catalogue.**
     """
 
     # [claude] Table names this guard permits. None means the whole
@@ -309,6 +333,38 @@ class SQLGuard:
             for cte in statement.find_all(exp.CTE)
             if cte.alias_or_name
         }
+
+        # ---------------------------------------------------------
+        # [claude] Restricted columns.
+        #
+        # Three reviews flagged that these were listed in the prompt and
+        # enforced nowhere: `SELECT contract_price FROM deals` passed the
+        # guard untouched, as did the same name in a WHERE, an alias, or an
+        # aggregate. Nine columns across three agents rested on the model
+        # choosing to comply.
+        #
+        # Walked here for the same reason tables are: the parse tree sees
+        # every clause, subquery and CTE, so there is no spelling that
+        # slips past. The list comes from the catalogue, which is also what
+        # renders the prompt text — one source, like Domain.tables.
+        #
+        # Aliases are checked too. `SELECT area AS contract_price` leaks
+        # nothing, but the rule says these names must not appear at all, and
+        # a column labelled with a restricted name in a result is a reader's
+        # problem even when the value is innocent.
+        # ---------------------------------------------------------
+
+        for column in statement.find_all(exp.Column):
+            if column.name.lower() in RESTRICTED_COLUMNS:
+                raise RestrictedColumnError(
+                    f"Column '{column.name}' is not available."
+                )
+
+        for alias in statement.find_all(exp.Alias):
+            if str(alias.alias).lower() in RESTRICTED_COLUMNS:
+                raise RestrictedColumnError(
+                    f"Column '{alias.alias}' is not available."
+                )
 
         for table in statement.find_all(exp.Table):
 
@@ -534,5 +590,6 @@ __all__ = [
     "MAX_ROWS",
     "SQLGuard",
     "SQLGuardError",
+    "RestrictedColumnError",  # [claude]
     "TableNotAllowedError",  # [claude]
 ]

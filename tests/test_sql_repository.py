@@ -9,10 +9,12 @@ class FakeExecutor:
     def __init__(self):
         self.query = None
         self.params = None
+        self.requester_id = None
 
-    async def execute(self, query, params=()):
+    async def execute(self, query, params=(), requester_id=None):
         self.query = query
         self.params = params
+        self.requester_id = requester_id
 
         return [
             {

@@ -1,6 +1,6 @@
 # marq-agent — handoff
 
-State as of `dev`, 17 August 2026 (all of the below uncommitted).
+State as of `dev`, 18 August 2026.
 Read this first in a new session; it replaces having the previous conversation.
 
 ---
@@ -36,7 +36,8 @@ tools, and compares the two sides in Python.
 | `app/graph/builder.py` | `build_graph(domain)`, `build_supervisor_graph()`, `make_domain_node` |
 | `app/graph/agents/domain.py` | `Domain` dataclass, `DOMAINS`, `build_domain_agent` |
 | `app/graph/agents/deals.py` · `leads.py` · `workspace.py` | Agent system prompts only |
-| `app/graph/state.py` | `AgentState` = messages + optional `route`, `workspace_id` |
+| `app/graph/state.py` | `AgentState` = messages + optional `route`, `workspace_id`, `requester_id` |
+| `migrations/` | `001` read-only role (applied to dev) · `002` RLS (written, **not applied**) |
 | `app/sql/catalogue.py` | Schema, business rules, relationships, enums — **and the guard's allowlist** |
 | `app/sql/agent.py` | SQL agent; returns `Sql \| Refused` |
 | `app/sql/guard.py` | `SQLGuard(tables=...)` |
@@ -113,9 +114,9 @@ Note: bare `python` may not be on PATH; the venv interpreter is
 `.venv/bin/python`.
 
 ```bash
-pytest                          # 547 hermetic, ~4s
+pytest                          # 594 hermetic, ~4s
 pytest -m "" --cov=app --cov-report=term-missing   # everything, 93%
-pytest -m integration           # 108, needs live model + PostgreSQL, ~2min
+pytest -m integration           # 113, needs live model + PostgreSQL, ~3min
 python -m evals.run             # 35 SQL cases
 python -m evals.graph_cases     # 18 whole-graph cases
 python -m evals.routing_cases   # 37 routing cases
@@ -130,8 +131,8 @@ python scripts/generate_fixture.py --stats
 
 | Suite | Result | Was (16 Aug) |
 |---|---|---|
-| `pytest` | 547/547 | 252 |
-| `pytest -m integration` | 108/108 | never run whole |
+| `pytest` | 594/594 | 252 |
+| `pytest -m integration` | 113/113 | never run whole |
 | `pytest -m ""` (everything) | 655/655, **93% coverage** | never measured |
 | `ruff check .` | clean | clean |
 | `evals.routing_cases` | 37/37 ×3 runs | 37/37 |
@@ -470,6 +471,46 @@ database (leads 5.36M rows, deals 40k). The catalogue was audited against it:
   codebase keeps fighting. `SELECT id, name FROM lead_stages ORDER BY id`
   closes the "lookup tables" gap for stages.
 
+**Fixed 18 August 2026 — mentor review `a575b67..c70d645`:**
+
+Four of the six findings closed. The two remaining are the ones that need
+the real CRM connection, and are described under "Waiting on the database".
+
+- *HIGH — restricted columns enforced by the prompt alone.* Flagged in three
+  consecutive reviews. `SELECT contract_price FROM deals` passed the guard
+  untouched, as did the same name in a WHERE, an alias, an aggregate or a
+  CTE — nine columns across three agents resting on the model complying. The
+  list is now `RESTRICTED_COLUMNS` in the catalogue **as data**, the guard
+  walks the parse tree for it exactly as it does for tables, and the prompt
+  text is rendered from the same tuple so the two cannot drift. Fifteen
+  smuggling routes are pinned in `tests/test_sql_guard.py`;
+  `RestrictedColumnError` is non-retryable, so the agent says "not available"
+  once instead of rephrasing.
+- *MEDIUM — `parse_route` was order-dependent substring matching.* Any prose
+  reply resolved to whichever route name came first in `VALID_ROUTES`, and
+  `out_of_scope` could never win — an off-topic question ran a full CRM agent
+  instead of declining in one line. Position could not fix it: *"Not a deals
+  question — route to leads"* wants the last mention while *"This is about
+  leads, not deals."* wants the first. What separates them is the negation,
+  so negated mentions are stripped before matching. All four of the
+  reviewer's cases pass, the one-word path is unchanged, and unparseable
+  still falls back to `deals`.
+- *HIGH — `marq_agent_ro` existed only in docstrings.* It existed on the dev
+  database as a login role **with no grants at all** — configured-looking and
+  able to read nothing. `migrations/001_read_only_role.sql` grants it SELECT
+  on exactly the catalogue tables and revokes the rest; the pool connects as
+  it when `POSTGRES_READONLY_USER` is set. Verified by probe: reads 350
+  deals, every write rejected, cannot create tables or see out-of-catalogue
+  tables. `Database.verify_read_only()` checks what the role *can do* rather
+  than what it is called, because those two came apart here.
+- *HIGH — no requester identity.* The agent-side half is built:
+  `requester_id` travels `AgentState` → runtime context → `SQLExecutor`,
+  which publishes it as `app.requester_id` via `set_config` inside an
+  explicit transaction. `SET LOCAL` scoping is not cosmetic — without it a
+  pooled connection would carry one employee's identity into the next
+  employee's question. It is not a tool argument, for the same reason
+  `workspace_id` is not.
+
 **Fixed 17 August 2026, fourth pass — found by measuring coverage:**
 
 Coverage was measured rather than guessed, and it pointed straight at the
@@ -521,6 +562,25 @@ and never enters the message state.
   missing five of the eleven masked columns, so those tests would not have
   noticed the agent reaching for a lead's budget or a campaign's spend.
 
+## Waiting on the database
+
+Two of the mentor's findings are genuinely blocked, and it is worth being
+precise about which half of each is blocked:
+
+| | needs the real CRM | already done |
+|---|---|---|
+| Read-only role | `CREATE ROLE`/`GRANT` on production `mytai` | the role and grants on the dev fixture, the migration, the config, and honest docstrings |
+| Requester identity + RLS | the policies in `002` | the whole agent-side path: `requester_id` → context → `SQLExecutor` → `app.requester_id` |
+
+So the plumbing is finished and the policy is written. What is missing is a
+CRM connection (`CRM_POSTGRES_*` is unset; the host **is** reachable) and an
+authenticated caller to populate `requester_id` — which is the API layer.
+
+**Until `002` is applied, every user of this agent can read every row of
+every table in the catalogue.** That is stated in `guard.py` as well, rather
+than left implied, and a consistency test fails if anyone re-adds a claim
+that RLS is in force.
+
 **Known bugs (unfixed):**
 - Pronoun-scope fix has no eval; the graph harness does not support multi-turn
   history.
@@ -571,14 +631,22 @@ and never enters the message state.
   saying so. No OCR.
 
 **Not built:**
-- Row-level visibility (`MyDealsScope` / `MyLeadsScope`). `deal_percentages` and
-  `lead_metas` are not in any allowlist, so a scope predicate cannot currently be
-  expressed. Decide: inject after validation, or PostgreSQL RLS.
+- **Row-level visibility — waiting on the database.** Decided: PostgreSQL
+  RLS, not an injected predicate, because a predicate the agent adds is one
+  the agent can be talked out of. `migrations/002_row_level_security.sql`
+  encodes both scopes — deals via `agent_id` plus `deal_percentages`, leads
+  via the `users.parent_id` subtree — and is deliberately **not applied**.
+  It needs the CRM connection and an authenticated caller populating
+  `requester_id`; applying it before then denies every row to everyone.
+  `deal_percentages` not being in the catalogue is fine here: the policy runs
+  inside PostgreSQL, where the agent's allowlist does not apply.
 - Lookup tables (`lead_stages`, `projects`, `franchises`, `lead_sources`). Ids
   are queryable, names are not.
 - `app/api/`, `app/auth/` — empty placeholders.
-- Database role is not read-only. `marq_agent_ro` exists but is unused; the guard
-  is currently the only enforcement point.
+- **Database role is read-only when configured.** `marq_agent_ro` had no
+  grants at all; `migrations/001_read_only_role.sql` fixes that and the pool
+  uses it when `POSTGRES_READONLY_USER` is set. Unset, the guard is still the
+  only enforcement point — `Database.verify_read_only()` says which.
 - `settings` and `app_db` are built at import. This is why the test suite needs a
   session-scoped event loop, and it will resurface when the API layer needs a
   lifespan.

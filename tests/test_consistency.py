@@ -383,3 +383,76 @@ def test_a_domains_step_ceiling_covers_its_longest_workflow(domain: Domain):
         f"{domain.name} allows {ceiling} steps; its longest workflow needs "
         f"{needed} with room to recover"
     )
+
+
+# ============================================================
+# [claude] Claims the code makes about database enforcement.
+#
+# guard.py stated for three reviews that a read-only role prevented writes
+# and RLS decided row access, while marq_agent_ro had no grants and RLS was
+# enabled on nothing. A docstring cannot be tested, but the shape of the
+# claim can: if the file describes a layer, that layer has to be reachable.
+# ============================================================
+
+
+def test_the_guard_does_not_claim_rls_is_in_force():
+    """
+    The specific sentence that was untrue. If someone re-adds a claim that
+    RLS decides row access, this fails until migrations/002 is applied.
+    """
+
+    from app.sql import guard
+
+    text = guard.SQLGuard.__doc__ or ""
+
+    assert "NOT YET IN FORCE" in text, (
+        "guard.py must not describe row-level security as active while "
+        "migrations/002_row_level_security.sql is unapplied"
+    )
+
+
+def test_the_read_only_migration_exists_and_grants_only_catalogue_tables():
+    """
+    The role must be granted exactly the catalogue tables — `ALL TABLES`
+    would mean a new table silently becomes readable by the agent.
+    """
+
+    from pathlib import Path
+
+    sql = Path("migrations/001_read_only_role.sql").read_text().lower()
+
+    for table in get_catalogue()["tables"]:
+        assert f"grant select on table public.{table}" in sql, (
+            f"{table} is in the catalogue but not granted to the role"
+        )
+
+    assert "grant select on all tables" not in sql
+    assert "revoke insert, update, delete" in sql
+
+
+def test_the_rls_migration_normalises_the_empty_requester():
+    """
+    A policy testing IS NULL alone passes on a fresh connection and fails on
+    a pooled one, because PostgreSQL leaves a set GUC defined as '' after
+    rollback. Both forms have to collapse.
+    """
+
+    from pathlib import Path
+
+    sql = Path("migrations/002_row_level_security.sql").read_text()
+
+    assert "NULLIF(current_setting('app.requester_id', true), '')" in sql
+
+
+def test_requester_id_is_not_a_tool_argument():
+    """
+    Same property workspace_id has, for the same reason: a model that could
+    name its own requester could name someone else's.
+    """
+
+    from app.tools.sql import build_sql_tool
+
+    tool = build_sql_tool(sql_agent=object(), repository=object())
+
+    assert "requester_id" not in tool.args
+    assert "runtime" not in tool.args

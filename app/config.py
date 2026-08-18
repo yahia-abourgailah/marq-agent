@@ -42,6 +42,21 @@ class Settings(BaseSettings):
     crm_postgres_password: str | None = None
     crm_postgres_db: str | None = None
 
+    # [claude] The read-only role the CRM reads should use.
+    #
+    # `guard.py` claimed since day one that a PostgreSQL role prevented the
+    # application from modifying CRM data. It did not: `marq_agent_ro`
+    # existed with no grants and the app connected as the owning user, so
+    # every guard check was the only thing standing between a generated
+    # query and a write.
+    #
+    # Optional, and unset falls back to the owner above — so nothing breaks
+    # for a developer who has not run migrations/001_read_only_role.sql.
+    # `Database.is_read_only` reports which one is actually in use, and a
+    # startup check can refuse to serve if it is not the role.
+    postgres_readonly_user: str | None = None
+    postgres_readonly_password: str | None = None
+
     # Redis
     redis_url: str
 

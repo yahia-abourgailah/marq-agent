@@ -70,6 +70,34 @@ class Database:
         self._opened = False
         self._open_lock = asyncio.Lock()
 
+        # Set by the module-level wiring below; see _READ_ONLY.
+        self.is_read_only = False
+
+    async def verify_read_only(self) -> bool:
+        """
+        Ask the database whether this connection can actually write.
+
+        [claude] Configuration says which role was requested; this says what
+        the role can do. The two came apart on the development database,
+        where `marq_agent_ro` existed as a login role with no grants at all —
+        it looked configured and could read nothing.
+
+        Attempts a write inside a transaction that is always rolled back, so
+        it is safe to call on a live database.
+        """
+
+        async with self.connection() as conn:
+            try:
+                async with conn.transaction(force_rollback=True):
+                    async with conn.cursor() as cursor:
+                        await cursor.execute(
+                            "CREATE TEMP TABLE _marq_write_probe (x int)"
+                        )
+            except Exception:
+                return True
+
+        return False
+
     async def connect(self) -> None:
         """Open the connection pool."""
         async with self._open_lock:
@@ -111,14 +139,33 @@ class Database:
             yield conn
 
 
+# [claude] Connect as the read-only role when one is configured.
+#
+# The guard's docstring described PostgreSQL permissions as the authoritative
+# layer beneath it, while the application connected as the table owner — so a
+# guard bug was a write, not a failed query. With the role configured, the
+# database refuses the write regardless of what the guard let through, which
+# is what "defence in depth" was supposed to mean.
+#
+# Falling back to the owner keeps a developer who has not run
+# migrations/001_read_only_role.sql working; `is_read_only` says which is in
+# force so nothing has to guess.
+_READ_ONLY = bool(settings.postgres_readonly_user)
+
 app_db = Database(
     host=settings.postgres_host,
     port=settings.postgres_port,
-    user=settings.postgres_user,
-    password=settings.postgres_password,
+    user=settings.postgres_readonly_user or settings.postgres_user,
+    password=(
+        settings.postgres_readonly_password
+        if _READ_ONLY
+        else settings.postgres_password
+    ),
     database=settings.postgres_db,
     statement_timeout_ms=10_000,
 )
+
+app_db.is_read_only = _READ_ONLY
 
 
 __all__ = ["Database", "app_db"]
