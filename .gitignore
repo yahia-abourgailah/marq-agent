@@ -248,3 +248,13 @@ var/workspace/
 # the cost of that template line being pruned one day is a signing key in a
 # public repository.
 var/dev-jwt/
+
+# [claude] Postman's Local View state, created by the Postman desktop app
+# when the repository directory is opened in its Files tab.
+#
+# NOT scratch output — I deleted these twice believing they were newman
+# leftovers, which detached the user's linked collection and environment and
+# left an open request tab pointing at nothing. They belong to the editor,
+# like .idea/ and .vscode/ above: ignored, and left alone.
+.postman/
+postman/
