@@ -392,3 +392,126 @@ async def test_streaming_and_json_send_the_graph_the_same_identity(issuer):
         json_call["config"]["configurable"]["thread_id"]
         == stream_call["config"]["configurable"]["thread_id"]
     )
+
+
+# ============================================================
+# Provenance
+# ============================================================
+
+
+@pytest.mark.asyncio
+async def test_the_response_carries_the_sql_behind_the_answer(issuer):
+    """
+    [claude] The point of the feature: the answer becomes checkable.
+
+    Without this the user gets a number and no way to tell a correct answer
+    from a plausible one — which is the failure mode this whole project
+    exists to fight.
+    """
+
+    graph = StubGraph(sql="SELECT count(*) AS deals_count FROM deals")
+    app, _ = build_app(verifier=issuer.verifier(), graph=graph)
+
+    async with client(app) as http:
+        response = await http.post(
+            "/v1/chat",
+            json={"message": "How many deals?"},
+            headers=issuer.auth(),
+        )
+
+    provenance = response.json()["provenance"]
+
+    assert len(provenance) == 1
+    assert provenance[0]["sql"] == "SELECT count(*) AS deals_count FROM deals"
+    assert provenance[0]["rows_available"] == 1
+
+
+@pytest.mark.asyncio
+async def test_a_turn_that_ran_no_query_reports_empty_provenance(issuer):
+    """An out-of-scope reply touched no data, and says so honestly."""
+
+    graph = StubGraph(sql=None, route="out_of_scope", tool_calls=[])
+    app, _ = build_app(verifier=issuer.verifier(), graph=graph)
+
+    async with client(app) as http:
+        response = await http.post(
+            "/v1/chat",
+            json={"message": "What is the weather?"},
+            headers=issuer.auth(),
+        )
+
+    assert response.json()["provenance"] == []
+
+
+@pytest.mark.asyncio
+async def test_the_stream_reports_provenance_on_the_final_event(issuer):
+    """
+    Both paths must agree. A second code path is exactly where a field gets
+    quietly dropped.
+    """
+
+    graph = StubGraph(sql="SELECT 1 FROM deals")
+    app, _ = build_app(verifier=issuer.verifier(), graph=graph)
+
+    async with client(app) as http:
+        response = await http.post(
+            "/v1/chat/stream",
+            json={"message": "How many deals?"},
+            headers=issuer.auth(),
+        )
+
+    events = sse_events(response.text)
+    final = json.loads(next(data for name, data in events if name == "final"))
+
+    assert final["provenance"][0]["sql"] == "SELECT 1 FROM deals"
+
+
+@pytest.mark.asyncio
+async def test_provenance_does_not_leak_between_requests(issuer):
+    """
+    Each turn reports only its own queries.
+
+    The collector is context-local, so a leak here would mean one user's
+    query text appearing in another user's response.
+    """
+
+    graph = StubGraph(sql="SELECT 1 FROM deals")
+    app, _ = build_app(verifier=issuer.verifier(), graph=graph)
+
+    async with client(app) as http:
+        first = await http.post(
+            "/v1/chat", json={"message": "one"}, headers=issuer.auth("alice@x.com")
+        )
+        second = await http.post(
+            "/v1/chat", json={"message": "two"}, headers=issuer.auth("bob@x.com")
+        )
+
+    assert len(first.json()["provenance"]) == 1
+    assert len(second.json()["provenance"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_the_generated_sql_still_never_reaches_the_token_stream(issuer):
+    """
+    Provenance is a separate channel, not a relaxation of the filter.
+
+    The SQL belongs in a field the front end can put behind a disclosure —
+    not streamed into the middle of the prose answer.
+    """
+
+    graph = StubGraph(sql="SELECT secret_column FROM deals")
+    app, _ = build_app(verifier=issuer.verifier(), graph=graph)
+
+    async with client(app) as http:
+        response = await http.post(
+            "/v1/chat/stream",
+            json={"message": "How many deals?"},
+            headers=issuer.auth(),
+        )
+
+    events = sse_events(response.text)
+    streamed = "".join(
+        json.loads(data)["text"] for name, data in events if name == "token"
+    )
+
+    assert "secret_column" not in streamed

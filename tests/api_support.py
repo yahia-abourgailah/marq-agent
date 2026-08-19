@@ -39,6 +39,7 @@ from app.api.app import create_app
 from app.auth.jwt import TokenVerifier
 from app.config import settings as base_settings
 from app.db.repositories.conversations import Conversation
+from app.sql import provenance
 
 ISSUER = "https://issuer.test"
 AUDIENCE = "marq-agent-test"
@@ -138,6 +139,17 @@ class StubGraph:
     calls: list[dict[str, Any]] = field(default_factory=list)
     raises: Exception | None = None
 
+    # [claude] SQL the stub pretends to have run, so the provenance path can
+    # be asserted through HTTP. The real tool records the same way; see
+    # app/sql/provenance.py.
+    sql: str | None = "SELECT count(*) AS deals_count FROM deals"
+
+    def _record_sql(self) -> None:
+        if self.sql:
+            provenance.record(
+                sql=self.sql, question="stubbed", rows_available=1
+            )
+
     def _messages(self) -> list[Any]:
         return [
             HumanMessage(content="(question)"),
@@ -157,6 +169,8 @@ class StubGraph:
 
         if self.raises is not None:
             raise self.raises
+
+        self._record_sql()
 
         return {"messages": self._messages(), "route": self.route}
 
@@ -202,6 +216,8 @@ class StubGraph:
         }
 
         for name in self.tool_calls:
+            self._record_sql()
+
             yield {
                 "event": "on_tool_start",
                 "name": name,

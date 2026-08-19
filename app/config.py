@@ -206,6 +206,23 @@ class Settings(BaseSettings):
     auth_dev_mode: bool = False
 
     # ----------------------------------------------------------
+    # Answer provenance
+    # ----------------------------------------------------------
+    #
+    # [claude] Return the SQL behind each answer.
+    #
+    # On by default because it is the point: every bug this project has
+    # found was a confident wrong number rather than an exception, and
+    # without the query a user cannot tell a right answer from a plausible
+    # one. Showing the query makes the claim checkable.
+    #
+    # The cost is that it reveals table and column names to anyone who can
+    # already query them through this API, which is a much smaller
+    # disclosure than it sounds. Turn it off if the front end would surface
+    # it to an audience that should not see the schema.
+    expose_provenance: bool = True
+
+    # ----------------------------------------------------------
     # Uploads
     # ----------------------------------------------------------
     #

@@ -18,6 +18,7 @@ from app.sql.guard import (
     SQLGuardError,
     TableNotAllowedError,
 )
+from app.sql.provenance import record as record_query
 
 # [claude] Serialised-payload ceiling for one tool result, in characters.
 # Roughly 5,000 tokens at ~4 chars/token — enough for a wide sample or a few
@@ -108,6 +109,11 @@ class SQLTool:
             # GraphRecursionError. Reported explicitly, and marked
             # non-retryable so the agent relays it instead of trying again.
             if isinstance(generated, Refused):
+                # [claude] Recorded too. A refusal is a typed outcome here,
+                # not a failure, and "no query was run, and here is why" is
+                # more useful to someone checking an answer than silence.
+                record_query(question=question, refused=generated.reason)
+
                 return {
                     "success": False,
                     "retryable": False,
@@ -139,6 +145,16 @@ class SQLTool:
             truncated = (
                 rows_available >= MAX_ROWS
                 or len(data) < rows_available
+            )
+
+            # [claude] Out of band, so the query never enters the
+            # model's context — see app/sql/provenance.py. A no-op unless
+            # something is collecting, which is only ever an HTTP request.
+            record_query(
+                sql=generated.query,
+                question=question,
+                rows_available=rows_available,
+                truncated=truncated,
             )
 
             return {

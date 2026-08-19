@@ -730,6 +730,14 @@
             },
             "type": "array",
             "title": "Tools Used"
+          },
+          "provenance": {
+            "items": {
+              "$ref": "#/components/schemas/QueryProvenance"
+            },
+            "type": "array",
+            "title": "Provenance",
+            "description": "Every database query behind this answer, in order. Empty for a turn that touched no data \u2014 an out-of-scope reply, or one answered entirely from an uploaded file. Turn it off with EXPOSE_PROVENANCE=false."
           }
         },
         "type": "object",
@@ -957,6 +965,67 @@
         ],
         "title": "Message",
         "description": "One message in a replayed conversation."
+      },
+      "QueryProvenance": {
+        "properties": {
+          "sql": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sql",
+            "description": "The SELECT that ran. Null when the agent declined."
+          },
+          "question": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Question",
+            "description": "What the agent asked the database, in words. A turn may run several queries, and the SQL alone does not say which part of the answer each one supports."
+          },
+          "rows_available": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rows Available",
+            "description": "Rows the query matched, before any display cap."
+          },
+          "truncated": {
+            "type": "boolean",
+            "title": "Truncated",
+            "description": "Whether the agent saw fewer rows than matched. Worth showing: a total computed from a truncated result is wrong, and this is the only signal that it might have been.",
+            "default": false
+          },
+          "refused": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refused",
+            "description": "Set instead of `sql` when the SQL agent declined \u2014 a masked column, a table outside the domain. 'No query ran, and here is why' is more useful than silence."
+          }
+        },
+        "type": "object",
+        "title": "QueryProvenance",
+        "description": "One database query run while answering, and what it returned.\n\n[claude] The reason this is in the response at all: the agent's numbers\nare otherwise unfalsifiable. A user reading \"there are 315 deals\" cannot\ntell a correct answer from a plausible one, and every defect this\nproject has found was exactly that \u2014 a confident wrong number, not a\ncrash.\n\nCaptured out of band, so none of this was in the model's context. See\napp/sql/provenance.py."
       },
       "ReadinessResponse": {
         "properties": {

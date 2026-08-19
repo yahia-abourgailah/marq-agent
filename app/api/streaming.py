@@ -44,6 +44,8 @@ from typing import Any
 from langchain_core.messages import HumanMessage
 
 from app.auth.principal import Principal
+from app.config import settings
+from app.sql import provenance
 
 logger = logging.getLogger("marq.api")
 
@@ -120,6 +122,22 @@ def tools_used_in(messages: list[Any]) -> list[str]:
     ]
 
 
+def provenance_of(collector: provenance.Collector | None) -> list[dict[str, Any]]:
+    """
+    The queries behind a turn, as JSON.
+
+    [claude] Empty when provenance is switched off, and empty for a turn
+    that ran no queries — an out-of-scope reply, or one answered entirely
+    from an uploaded file. Both are honest: the field says what the database
+    was asked, and sometimes the answer is "nothing".
+    """
+
+    if collector is None or not settings.expose_provenance:
+        return []
+
+    return [record.as_dict() for record in collector.records]
+
+
 def graph_input(principal: Principal, message: str) -> dict[str, Any]:
     """
     The graph's input state for one turn.
@@ -174,82 +192,89 @@ async def stream_turn(
     tools: list[str] = []
     parts: list[str] = []
 
-    try:
-        async for event in graph.astream_events(
-            graph_input(principal, message),
-            config=run_config(thread_key, request_id),
-            version="v2",
-        ):
-            kind = event["event"]
-            node = (event.get("metadata") or {}).get("langgraph_node")
+    # [claude] Collects the SQL each tool call runs, out of band — the
+    # queries never enter the model's context. See app/sql/provenance.py.
+    with provenance.collect() as collector:
+        try:
+            async for event in graph.astream_events(
+                graph_input(principal, message),
+                config=run_config(thread_key, request_id),
+                version="v2",
+            ):
+                kind = event["event"]
+                node = (event.get("metadata") or {}).get("langgraph_node")
 
-            if kind == "on_tool_start":
-                tool_depth += 1
+                if kind == "on_tool_start":
+                    tool_depth += 1
 
-                name = event.get("name", "")
-                tools.append(name)
+                    name = event.get("name", "")
+                    tools.append(name)
 
-                yield sse("tool", {"name": name})
+                    yield sse("tool", {"name": name})
 
-            elif kind == "on_tool_end":
-                # Clamped at zero: a malformed pairing must not leave the
-                # counter negative, which would un-suppress the SQL agent.
-                tool_depth = max(0, tool_depth - 1)
+                elif kind == "on_tool_end":
+                    # Clamped at zero: a malformed pairing must not leave
+                    # the counter negative, which would un-suppress the SQL
+                    # agent's tokens.
+                    tool_depth = max(0, tool_depth - 1)
 
-            elif kind == "on_chat_model_stream":
-                if node == SUPERVISOR_NODE or tool_depth > 0:
-                    # The route decision, or the SQL agent thinking.
-                    continue
+                elif kind == "on_chat_model_stream":
+                    if node == SUPERVISOR_NODE or tool_depth > 0:
+                        # The route decision, or the SQL agent thinking.
+                        continue
 
-                text = getattr(event["data"].get("chunk"), "content", "") or ""
+                    text = getattr(event["data"].get("chunk"), "content", "")
 
-                if text:
-                    parts.append(text)
+                    if text:
+                        parts.append(text)
 
-                    yield sse("token", {"text": text})
+                        yield sse("token", {"text": text})
 
-            elif kind == "on_chain_end" and node == SUPERVISOR_NODE:
-                decided = route_from(event.get("data", {}).get("output"))
+                elif kind == "on_chain_end" and node == SUPERVISOR_NODE:
+                    decided = route_from(event.get("data", {}).get("output"))
 
-                if decided and decided != route:
-                    route = decided
+                    if decided and decided != route:
+                        route = decided
 
-                    yield sse("route", {"route": route})
+                        yield sse("route", {"route": route})
 
-    except Exception:
-        # [claude] Logged in full, reported as one sentence — the same rule
-        # as app/api/errors.py. A stream cannot change its status code once
-        # it has started, so the error has to arrive as an event.
-        logger.exception(
-            "stream_failed",
-            extra={"request_id": request_id, "thread_id": thread_id},
-        )
+        except Exception:
+            # [claude] Logged in full, reported as one sentence — the same
+            # rule as app/api/errors.py. A stream cannot change its status
+            # code once it has started, so the error has to arrive as an
+            # event.
+            logger.exception(
+                "stream_failed",
+                extra={"request_id": request_id, "thread_id": thread_id},
+            )
+
+            yield sse(
+                "error",
+                {
+                    "code": "internal_error",
+                    "message": "Something went wrong answering that question.",
+                    "request_id": request_id,
+                },
+            )
+
+            return
 
         yield sse(
-            "error",
+            "final",
             {
-                "code": "internal_error",
-                "message": "Something went wrong answering that question.",
-                "request_id": request_id,
+                "thread_id": thread_id,
+                "answer": "".join(parts).strip(),
+                "route": route,
+                "tools_used": tools,
+                "provenance": provenance_of(collector),
             },
         )
-
-        return
-
-    yield sse(
-        "final",
-        {
-            "thread_id": thread_id,
-            "answer": "".join(parts).strip(),
-            "route": route,
-            "tools_used": tools,
-        },
-    )
 
 
 __all__ = [
     "SUPERVISOR_NODE",
     "answer_of",
+    "provenance_of",
     "route_from",
     "graph_input",
     "run_config",

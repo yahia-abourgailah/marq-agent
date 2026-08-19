@@ -512,6 +512,33 @@ the checkpointer would fail on any environment that configured itself
 correctly and work on a developer machine that had not — the security posture
 and the deployment punished for it exactly inverted. See `app/db/state.py`.
 
+**Answers carry their SQL** (added 19 August 2026). Every chat response has
+a `provenance` list holding the query behind it, the row count it matched,
+whether it was truncated, and the refusal reason when no query ran.
+
+This is the feature the whole project's working practice implies. "Verify
+answers against SQL, not just that nothing crashed" was advice only a
+developer with a psql prompt could follow; the number a user saw was
+unfalsifiable to that user. Now it is checkable by whoever is reading it.
+
+Captured through a `ContextVar` in `app/sql/provenance.py`, not by adding
+`"sql"` to the tool payload. The payload route was rejected twice over: it
+spends context tokens on a string the agent wrote and will never read back —
+`app/tools/sql.py` already caps that payload because width is what blows the
+window — and it invites the agent to quote SQL at users, which the prompts
+work hard to prevent. The ContextVar keeps it entirely out of band, and
+records nothing at all when nobody is collecting, which is why the CLI, the
+evals and the hermetic suite are unaffected.
+
+The mechanism rests on `asyncio.Task` copying its context at creation and on
+the collector being mutated rather than rebound, so appends made inside
+LangGraph's own tasks reach the request that started them.
+`test_records_survive_nested_tasks` pins it: if that stopped holding,
+provenance would come back silently empty — present-looking and reporting
+nothing.
+
+`EXPOSE_PROVENANCE=false` withholds the field.
+
 **Testing it without a front end.** There is no token issuer yet, so
 `scripts/dev_token.py` stands in for one: it keeps a development keypair
 under `var/` (gitignored, `0600`) and signs tokens the API verifies exactly as

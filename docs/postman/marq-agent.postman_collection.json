@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "55255f16-0ce8-4958-bb1b-7ebeb4dbe24d",
     "name": "MarQ Agent API",
-    "description": "Conversational access to the MyTAI CRM, plus a per-user workspace for uploaded files.\n\n## Setup\n\n1. Start the API:  `python main.py`\n2. Mint a token:   `python scripts/dev_token.py mint`\n3. Paste it into the `token` environment variable.\n\nSelect the **MarQ Agent \u2014 local** environment before sending anything.\n\n## Notes\n\n- Auth is Bearer at the collection level; every request inherits it.\n- `thread_id` and `file_id` are captured automatically by test scripts, so run *Ask a question* before the Threads folder.\n- The identity (`requester_id`, `workspace_id`) comes from the token and is refused if sent in a body \u2014 see **Negative tests**.\n- **SSE:** Postman buffers `text/event-stream` rather than showing live frames. Use `curl -N` to watch a stream properly; the command is in the *Ask a question (streaming)* description.",
+    "description": "Conversational access to the MyTAI CRM, plus a per-user workspace for uploaded files.\n\n## Setup\n\n1. Start the API:  `python main.py`\n2. Mint a token:   `python scripts/dev_token.py mint`\n3. Paste it into the `token` environment variable.\n\nSelect the **MarQ Agent \u2014 local** environment before sending anything.\n\n## Notes\n\n- Auth is Bearer at the collection level; every request inherits it.\n- `thread_id` and `file_id` are captured automatically by test scripts, so run *Ask a question* before the Threads folder.\n- The identity (`requester_id`, `workspace_id`) comes from the token and is refused if sent in a body \u2014 see **Negative tests**.\n- Every chat response carries `provenance`: the SQL behind the answer, so you can verify a number rather than trust it. Set `EXPOSE_PROVENANCE=false` to withhold it.\n- **SSE:** Postman buffers `text/event-stream` rather than showing live frames. Use `curl -N` to watch a stream properly; the command is in the *Ask a question (streaming)* description.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -126,7 +126,7 @@
                 "chat"
               ]
             },
-            "description": "Runs a full turn and waits for the answer. Takes a few seconds \u2014 two to three model calls.\n\nGround truth on the dev fixture: **315** deals.\n\nCaptures `thread_id` into the environment, so the next requests continue this conversation.",
+            "description": "Runs a full turn and waits for the answer. Takes a few seconds \u2014 two to three model calls.\n\nGround truth on the dev fixture: **315** deals.\n\nCaptures `thread_id` into the environment, so the next requests continue this conversation.\n\n**Check the `provenance` field.** It carries the SQL the agent actually ran, so you can paste it into psql and confirm the number yourself. That is the point \u2014 every bug this project has found was a confident wrong number rather than an error.",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"message\": \"How many deals are there in total?\"\n}",
@@ -148,7 +148,15 @@
                   "pm.collectionVariables.set(\"thread_id\", b.thread_id);",
                   "pm.test(\"answered\", () => pm.expect(b.answer).to.not.be.empty);",
                   "pm.test(\"routed\", () => pm.expect([\"deals\",\"leads\",\"workspace\",\"out_of_scope\"]).to.include(b.route));",
-                  "console.log(\"route:\", b.route, \"| tools:\", b.tools_used);"
+                  "console.log(\"route:\", b.route, \"| tools:\", b.tools_used);",
+                  "pm.test(\"returns the SQL behind the answer\", () => {",
+                  "  pm.expect(b.provenance).to.be.an(\"array\");",
+                  "});",
+                  "if (b.provenance && b.provenance.length) {",
+                  "  b.provenance.forEach(p => console.log(\"SQL:\", p.sql || (\"refused: \" + p.refused)));",
+                  "} else {",
+                  "  console.log(\"no database query was run for this turn\");",
+                  "}"
                 ]
               }
             }
@@ -289,6 +297,54 @@
                 "exec": [
                   "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
                   "pm.test(\"declined\", () => pm.expect(pm.response.json().route).to.eql(\"out_of_scope\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A question it must refuse",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"What is the total contract price of all our deals?\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/chat",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "chat"
+              ]
+            },
+            "description": "`contract_price` is a masked column \u2014 the guard blocks it, not just the prompt. The answer says it is unavailable, and `provenance` records the refusal with `sql: null` and a reason. \"No query ran, and here is why\" is more useful than silence."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test(\"declines rather than inventing a number\", () => {",
+                  "  pm.expect(b.answer.toLowerCase()).to.include(\"not available\");",
+                  "});",
+                  "console.log(\"provenance:\", JSON.stringify(b.provenance));"
                 ]
               }
             }

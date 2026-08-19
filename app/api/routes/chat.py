@@ -26,11 +26,13 @@ from app.api.schemas import ChatRequest, ChatResponse
 from app.api.streaming import (
     answer_of,
     graph_input,
+    provenance_of,
     run_config,
     stream_turn,
     tools_used_in,
 )
 from app.db.repositories.conversations import make_title
+from app.sql import provenance
 
 logger = logging.getLogger("marq.api")
 
@@ -71,10 +73,15 @@ async def chat(
         },
     )
 
-    result = await graph.ainvoke(
-        graph_input(principal, body.message),
-        config=run_config(thread_key, request_id_of(request)),
-    )
+    # [claude] Collects the SQL behind the answer without it ever entering
+    # the model's context — see app/sql/provenance.py. The same helper wraps
+    # the streaming path, so the two cannot report different queries for the
+    # same turn.
+    with provenance.collect() as collector:
+        result = await graph.ainvoke(
+            graph_input(principal, body.message),
+            config=run_config(thread_key, request_id_of(request)),
+        )
 
     messages = result["messages"]
 
@@ -93,6 +100,7 @@ async def chat(
         answer=answer_of(messages),
         route=result.get("route"),
         tools_used=tools_used_in(messages),
+        provenance=provenance_of(collector),
     )
 
 

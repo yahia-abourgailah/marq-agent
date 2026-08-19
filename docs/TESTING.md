@@ -144,6 +144,20 @@ want to know whether a change broke an answer:
 **Verify against SQL, not against "it didn't error".** Nearly every bug found
 in this project was a confident wrong number rather than an exception.
 
+You no longer need to guess which query to check against — every chat
+response carries `provenance` with the SQL that produced the answer:
+
+```bash
+curl -s -X POST localhost:8000/v1/chat \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $(python scripts/dev_token.py mint)" \
+  -d '{"message":"How many deals are contracted versus cancelled?"}' \
+  | python3 -c "import json,sys; print(json.load(sys.stdin)['provenance'][0]['sql'])"
+```
+
+Paste the result into psql. If it does not reproduce the answer, that is a
+real bug and worth reporting.
+
 ---
 
 ## When something fails

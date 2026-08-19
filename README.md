@@ -231,6 +231,35 @@ Two employees can both use a thread called `today` and will never see each
 other's. A thread id belonging to somebody else reads as 404, not 403 — a
 403 would confirm which ids exist.
 
+### Verifying an answer
+
+Every chat response carries `provenance` — the SQL the agent actually ran:
+
+```json
+{
+  "answer": "There are 225 contracted deals and 70 cancelled deals.",
+  "provenance": [{
+    "sql": "SELECT status, count(*) AS deals_count FROM deals\nWHERE deleted_at IS NULL AND status IN ('contracted','cancelled')\nGROUP BY status",
+    "question": "count of deals by status",
+    "rows_available": 2,
+    "truncated": false,
+    "refused": null
+  }]
+}
+```
+
+Paste that into psql and you get 225 and 70. That is the point: a number the
+user cannot check is a number they have to trust, and every defect this
+project has found was a confident wrong number rather than an error.
+
+`refused` is set instead of `sql` when the agent declined — a masked column,
+a table outside the domain. `truncated` says the agent saw fewer rows than
+matched, which is the only signal that a total computed from them might be
+wrong.
+
+The queries are captured out of band and never enter the model's context.
+Set `EXPOSE_PROVENANCE=false` to withhold the field.
+
 ### Streaming
 
 `POST /v1/chat/stream` emits `start`, `route`, `tool`, `token`, then `final`.

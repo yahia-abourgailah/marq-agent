@@ -45,6 +45,58 @@ class ChatRequest(BaseModel):
     )
 
 
+class QueryProvenance(BaseModel):
+    """
+    One database query run while answering, and what it returned.
+
+    [claude] The reason this is in the response at all: the agent's numbers
+    are otherwise unfalsifiable. A user reading "there are 315 deals" cannot
+    tell a correct answer from a plausible one, and every defect this
+    project has found was exactly that — a confident wrong number, not a
+    crash.
+
+    Captured out of band, so none of this was in the model's context. See
+    app/sql/provenance.py.
+    """
+
+    sql: str | None = Field(
+        default=None,
+        description="The SELECT that ran. Null when the agent declined.",
+    )
+
+    question: str | None = Field(
+        default=None,
+        description=(
+            "What the agent asked the database, in words. A turn may run "
+            "several queries, and the SQL alone does not say which part of "
+            "the answer each one supports."
+        ),
+    )
+
+    rows_available: int | None = Field(
+        default=None,
+        description="Rows the query matched, before any display cap.",
+    )
+
+    truncated: bool = Field(
+        default=False,
+        description=(
+            "Whether the agent saw fewer rows than matched. Worth showing: "
+            "a total computed from a truncated result is wrong, and this is "
+            "the only signal that it might have been."
+        ),
+    )
+
+    refused: str | None = Field(
+        default=None,
+        description=(
+            "Set instead of `sql` when the SQL agent declined — a masked "
+            "column, a table outside the domain. 'No query ran, and here is "
+            "why' is more useful than silence."
+        ),
+    )
+
+
 class ChatResponse(BaseModel):
     """A completed turn."""
 
@@ -62,6 +114,16 @@ class ChatResponse(BaseModel):
     )
 
     tools_used: list[str] = Field(default_factory=list)
+
+    provenance: list[QueryProvenance] = Field(
+        default_factory=list,
+        description=(
+            "Every database query behind this answer, in order. Empty for a "
+            "turn that touched no data — an out-of-scope reply, or one "
+            "answered entirely from an uploaded file. Turn it off with "
+            "EXPOSE_PROVENANCE=false."
+        ),
+    )
 
 
 class ConversationSummary(BaseModel):
@@ -173,6 +235,7 @@ __all__ = [
     "FileList",
     "HealthResponse",
     "Message",
+    "QueryProvenance",
     "ReadinessResponse",
     "UploadResponse",
     "UploadedFile",
