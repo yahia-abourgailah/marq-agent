@@ -51,18 +51,12 @@ class Database:
             dbname=database,
         )
 
-        self.pool = AsyncConnectionPool(
-            conninfo=self.dsn,
-            min_size=min_size,
-            max_size=max_size,
-            open=False,
-            kwargs={
-                "row_factory": dict_row,
-                "options": (
-                    f"-c statement_timeout={statement_timeout_ms}"
-                ),
-            },
-        )
+        # [claude] Kept so the pool can be rebuilt. See _build_pool.
+        self._min_size = min_size
+        self._max_size = max_size
+        self._statement_timeout_ms = statement_timeout_ms
+
+        self.pool = self._build_pool()
 
         # [claude] Guards the lazy open in connection(). The lock is created
         # here rather than at first use so two concurrent tool calls cannot
@@ -72,6 +66,38 @@ class Database:
 
         # Set by the module-level wiring below; see _READ_ONLY.
         self.is_read_only = False
+
+    def _build_pool(self) -> AsyncConnectionPool:
+        """
+        Construct a fresh, unopened pool.
+
+        [claude] Factored out because a psycopg pool is single-use: once
+        closed it raises `PoolClosed: pool has already been opened/closed and
+        cannot be reused` on any further use, and it cannot be reopened.
+
+        `close()` set `_opened = False` with a comment saying it allowed
+        reopening after close. It did not — the flag was reset while the pool
+        underneath stayed permanently dead, so `connect()` afterwards raised.
+        Nothing hit it because `app_db` is a module-level singleton that
+        production opens once, but it made the object's lifecycle a lie and
+        it broke the moment anything booted the application twice in one
+        process, which is what the API boot test does.
+
+        Rebuilding here makes connect/close/connect actually work.
+        """
+
+        return AsyncConnectionPool(
+            conninfo=self.dsn,
+            min_size=self._min_size,
+            max_size=self._max_size,
+            open=False,
+            kwargs={
+                "row_factory": dict_row,
+                "options": (
+                    f"-c statement_timeout={self._statement_timeout_ms}"
+                ),
+            },
+        )
 
     async def verify_read_only(self) -> bool:
         """
@@ -99,9 +125,14 @@ class Database:
         return False
 
     async def connect(self) -> None:
-        """Open the connection pool."""
+        """Open the connection pool, rebuilding it if it was closed."""
         async with self._open_lock:
             if not self._opened:
+                if self.pool.closed:
+                    # A closed psycopg pool cannot be reopened — see
+                    # _build_pool for why this is not just belt and braces.
+                    self.pool = self._build_pool()
+
                 await self.pool.open()
                 self._opened = True  # [claude] keep lazy-open state in sync
 
@@ -109,7 +140,11 @@ class Database:
         """Close the connection pool."""
         async with self._open_lock:
             await self.pool.close()
-            self._opened = False  # [claude] allow reopening after close
+
+            # [claude] The pool is now permanently unusable; connect() and
+            # connection() rebuild it. Previously this flag was reset as
+            # though the pool could be reopened, which it cannot.
+            self._opened = False
 
     @asynccontextmanager
     async def connection(self) -> AsyncIterator[AsyncConnection]:
@@ -132,6 +167,9 @@ class Database:
             async with self._open_lock:
                 # Re-check inside the lock: concurrent tool calls race here.
                 if not self._opened:
+                    if self.pool.closed:
+                        self.pool = self._build_pool()
+
                     await self.pool.open()
                     self._opened = True
 
