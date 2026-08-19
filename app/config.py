@@ -104,6 +104,130 @@ class Settings(BaseSettings):
     # Optional with a default, so existing environment files keep working.
     model_temperature: float = 0.0
 
+    # ==========================================================
+    # [claude] HTTP API layer
+    # ==========================================================
+    #
+    # `LOG_LEVEL` and `API_V1_PREFIX` have been in every .env template since
+    # the beginning and were read by nothing — `extra="ignore"` swallowed
+    # them silently, so setting LOG_LEVEL=DEBUG did exactly nothing. They are
+    # declared here now, which is what makes them real.
+
+    log_level: str = "INFO"
+    api_v1_prefix: str = "/v1"
+
+    api_host: str = "127.0.0.1"
+    api_port: int = 8000
+
+    # [claude] Bound to loopback by default, deliberately.
+    #
+    # This service answers questions about customer data. A default of
+    # 0.0.0.0 means anyone who runs it without reading the configuration has
+    # published it to their whole network; a default of 127.0.0.1 fails
+    # closed, and the deployment that genuinely needs to bind publicly has
+    # to say so. Set API_HOST=0.0.0.0 in the container.
+
+    # ----------------------------------------------------------
+    # Cross-origin access
+    # ----------------------------------------------------------
+    #
+    # The website front end is served from a different origin, so it needs
+    # CORS. Empty by default rather than "*": credentialed requests with a
+    # wildcard origin are rejected by browsers anyway, so a permissive
+    # default would only look like it worked.
+    #
+    # Comma-separated: CORS_ORIGINS=https://app.example.com,https://admin.example.com
+    cors_origins: str = ""
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        """`cors_origins` split into a list, ignoring blanks."""
+
+        return [
+            origin.strip()
+            for origin in self.cors_origins.split(",")
+            if origin.strip()
+        ]
+
+    # ----------------------------------------------------------
+    # JWT bearer authentication
+    # ----------------------------------------------------------
+    #
+    # [claude] The front end authenticates its own users and presents a
+    # signed token here. The employee id is read from a claim, so it is
+    # asserted by whoever holds the signing key rather than by the caller.
+    #
+    # This is the layer docs/HANDOFF.md defers `requester_id` to, and the
+    # reason it must be a claim: row-level security in
+    # migrations/002_row_level_security.sql filters on `app.requester_id`,
+    # so a requester id taken from a request body would let any caller read
+    # any employee's rows by editing one JSON field.
+    #
+    # Asymmetric (RS256/ES256) is the better fit — the issuer holds the
+    # private key and this service only ever needs the public half, so a
+    # compromise here cannot mint tokens. HS256 is supported for deployments
+    # that already have a shared secret.
+    jwt_algorithm: str = "RS256"
+
+    # One of these is required unless auth_dev_mode is on. `jwt_public_key`
+    # for asymmetric algorithms, `jwt_secret` for HS*.
+    jwt_public_key: str | None = None
+    jwt_secret: str | None = None
+
+    # [claude] The public key as a file path instead of a literal.
+    #
+    # A PEM is multi-line. python-dotenv does parse a quoted multi-line value
+    # correctly, so `JWT_PUBLIC_KEY` works — but a key blob wedged into an
+    # env file is unreadable and easy to corrupt with an editor that trims
+    # trailing whitespace. A path is also how secrets actually arrive in
+    # production: mounted into the container as a file.
+    #
+    # `jwt_public_key` wins when both are set, so an explicit literal is
+    # never silently overridden by a stale file.
+    jwt_public_key_path: str | None = None
+
+    # Verified when set. Leaving them unset skips the check, which is worth
+    # avoiding in production: without an audience check, a token minted for
+    # a different service by the same issuer is accepted here.
+    jwt_issuer: str | None = None
+    jwt_audience: str | None = None
+
+    # Which claim carries the employee id. `sub` is the standard home for
+    # it; override if the issuer puts it elsewhere.
+    jwt_subject_claim: str = "sub"
+
+    # [claude] Local development without a token issuer.
+    #
+    # When on, an unsigned `X-Debug-Subject` header supplies the identity.
+    # It is refused outright when APP_ENV is production — see
+    # app/auth/jwt.py, which raises at construction rather than trusting
+    # this to be set correctly. A flag that disables authentication is the
+    # kind of thing that gets left on, so it defends itself.
+    auth_dev_mode: bool = False
+
+    # ----------------------------------------------------------
+    # Uploads
+    # ----------------------------------------------------------
+    #
+    # [claude] A bound on what one request may push through the parser.
+    # Ingest reads the whole file into memory and parses it synchronously,
+    # so an unbounded upload is a memory exhaustion away from taking the
+    # process down. 25 MB comfortably covers a real CRM export.
+    max_upload_bytes: int = 25 * 1024 * 1024
+
+    # ----------------------------------------------------------
+    # Conversation persistence
+    # ----------------------------------------------------------
+    #
+    # [claude] The LangGraph checkpointer. InMemorySaver loses every
+    # conversation when the process restarts and shares nothing between
+    # workers, so under more than one uvicorn worker a follow-up question
+    # lands on a process that has never heard of the thread.
+    #
+    # Postgres-backed when on, which is what makes the thread endpoints
+    # honest. Off in tests, which keeps them hermetic.
+    checkpointer_backend: str = "postgres"
+
     model_config = SettingsConfigDict(
         env_file=ENV_FILE,  # [claude] was hardcoded to ".env.development"
         env_file_encoding="utf-8",

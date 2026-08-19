@@ -59,10 +59,30 @@ ruff>=0.6
 # what makes the no-Docker local server work.
 langgraph-cli[inmem]>=0.4
 
-# --- Not yet imported by any module; kept for planned work ---------------
-# HTTP API layer (app/api/ is still empty)
+# --- HTTP API ------------------------------------------------------------
+# [claude] Moved up from "not yet imported": app/api/ exists now and imports
+# all of these. main.py is the entry point; see app/api/app.py.
 fastapi>=0.115
 uvicorn[standard]>=0.32
 httpx>=0.27
+
+# Multipart form parsing. FastAPI needs it for UploadFile and raises at
+# import time without it, so the upload endpoint is a hard dependency rather
+# than an optional extra.
+python-multipart>=0.0.9
+
+# Server-Sent Events for POST /v1/chat/stream. It was already present as a
+# transitive dependency of langgraph-api; declared explicitly because
+# app/api/streaming.py imports it directly, and a transitive pin is one
+# upstream release away from disappearing.
+sse-starlette>=2.1
+
+# --- Authentication ------------------------------------------------------
+# [claude] The [crypto] extra pulls `cryptography`, which is what verifies
+# RS256/ES256. Without it PyJWT supports HMAC only, so an asymmetric
+# deployment would fail at the first request rather than at install.
+PyJWT[crypto]>=2.8
+
+# --- Not yet imported by any module; kept for planned work ---------------
 # Caching (no code imports redis yet)
 redis>=5.0
