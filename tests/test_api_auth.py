@@ -19,7 +19,7 @@ import time
 import jwt
 import pytest
 
-from app.auth.jwt import TokenVerifier
+from app.auth.jwt import AuthError, TokenVerifier
 from app.auth.principal import Principal, workspace_id_for
 from tests.api_support import (
     AUDIENCE,
@@ -445,3 +445,141 @@ def test_thread_keys_are_namespaced_per_subject():
     assert alice.thread_key("today") != bob.thread_key("today")
     assert alice.thread_key("today") == alice.thread_key("today")
     assert "alice@example.com" not in alice.thread_key("today")
+
+
+# ============================================================
+# Where the verification key comes from
+# ============================================================
+
+
+def test_the_public_key_can_be_read_from_a_file(issuer, tmp_path):
+    """
+    `JWT_PUBLIC_KEY_PATH` is how a key arrives in production — mounted into
+    the container as a file rather than wedged into an env var.
+    """
+
+    key_file = tmp_path / "public.pem"
+    key_file.write_text(issuer.public_pem)
+
+    verifier = TokenVerifier(
+        issuer.settings(jwt_public_key=None, jwt_public_key_path=str(key_file))
+    )
+
+    principal = verifier.verify(issuer.token("employee-9"))
+
+    assert principal.subject == "employee-9"
+
+
+def test_a_key_path_that_does_not_exist_raises_rather_than_degrading(issuer):
+    """
+    [claude] The important half.
+
+    Falling back to "no key configured" on a typo'd path would be a silent
+    downgrade: in dev mode that state accepts an identity from an unsigned
+    header, so a misspelled filename would turn signature verification off
+    rather than fail. It raises at construction instead, so the process does
+    not start.
+    """
+
+    with pytest.raises(RuntimeError, match="does not exist"):
+        TokenVerifier(
+            issuer.settings(
+                jwt_public_key=None,
+                jwt_public_key_path="/nonexistent/nowhere/public.pem",
+            )
+        )
+
+
+def test_an_explicit_key_wins_over_a_stale_file(issuer, tmp_path):
+    """
+    Both configured means the literal is authoritative, so an explicit key
+    is never silently overridden by a file left on disk from an earlier
+    deployment.
+    """
+
+    other = TokenIssuer()
+
+    stale = tmp_path / "stale.pem"
+    stale.write_text(other.public_pem)
+
+    verifier = TokenVerifier(
+        issuer.settings(
+            jwt_public_key=issuer.public_pem,
+            jwt_public_key_path=str(stale),
+        )
+    )
+
+    # Signed by `issuer`, whose key is the literal — accepted.
+    assert verifier.verify(issuer.token("employee-1")).subject == "employee-1"
+
+    # Signed by the key in the stale file — rejected.
+    with pytest.raises(AuthError):
+        verifier.verify(other.token("attacker"))
+
+
+def test_verify_refuses_outright_when_no_key_is_configured(issuer):
+    """
+    Reachable only in dev mode, where `get_principal` never calls it. Kept
+    explicit so a future caller cannot obtain an unverified Principal by
+    taking a different route into this method.
+    """
+
+    verifier = TokenVerifier(
+        issuer.settings(
+            jwt_public_key=None, jwt_public_key_path=None, auth_dev_mode=True
+        )
+    )
+
+    assert verifier.key is None
+
+    with pytest.raises(AuthError):
+        verifier.verify(issuer.token())
+
+
+# ============================================================
+# Development mode, the accepting path
+# ============================================================
+
+
+@pytest.mark.asyncio
+async def test_dev_mode_accepts_the_debug_subject_header(issuer):
+    """
+    The rejection paths are covered above; this is the branch that actually
+    lets someone in, and it should be exercised rather than assumed.
+    """
+
+    graph = StubGraph()
+    app, _ = build_app(
+        verifier=issuer.verifier(auth_dev_mode=True), graph=graph
+    )
+
+    async with client(app) as http:
+        response = await http.post(
+            "/v1/chat",
+            json={"message": "How many deals?"},
+            headers={"X-Debug-Subject": "dev@example.com"},
+        )
+
+    assert response.status_code == 200
+    assert graph.calls[-1]["state"]["requester_id"] == "dev@example.com"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("header", ["", "   "])
+async def test_dev_mode_still_refuses_an_empty_debug_subject(issuer, header):
+    """
+    An empty subject would hash to a valid workspace id and publish an empty
+    requester id, which a policy reads as "nobody" — silently matching
+    nothing while looking like it worked.
+    """
+
+    app, _ = build_app(verifier=issuer.verifier(auth_dev_mode=True))
+
+    async with client(app) as http:
+        response = await http.post(
+            "/v1/chat",
+            json={"message": "hi"},
+            headers={"X-Debug-Subject": header},
+        )
+
+    assert response.status_code == 401

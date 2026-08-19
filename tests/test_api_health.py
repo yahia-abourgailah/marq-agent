@@ -136,3 +136,165 @@ async def test_readiness_reports_every_component(issuer, stub_database):
     for component in ("database", "checkpointer", "model", "vector_index"):
         assert component in body
         assert "ok" in body[component]
+
+
+# ============================================================
+# What readiness says when something is actually broken
+# ============================================================
+
+
+@pytest.mark.asyncio
+async def test_an_unreachable_database_fails_readiness(issuer, monkeypatch):
+    """
+    [claude] The branch that matters most.
+
+    A readiness endpoint reporting healthy while the database is down is
+    worse than no endpoint at all: the orchestrator keeps sending traffic to
+    an instance that cannot answer a single question.
+    """
+
+    from app.api.routes import health as module
+
+    class DeadPool:
+        def connection(self):
+            raise ConnectionError("could not connect to 10.10.67.77:5432")
+
+    monkeypatch.setattr(module, "app_db", DeadPool())
+
+    app, _ = build_app(verifier=issuer.verifier())
+
+    async with client(app) as http:
+        response = await http.get("/health/ready")
+
+    body = response.json()
+
+    assert response.status_code == 503
+    assert body["ready"] is False
+    assert body["database"]["ok"] is False
+
+    # Type only — a driver error's text carries DSN fragments.
+    assert "10.10.67.77" not in response.text
+    assert body["database"]["detail"] == "ConnectionError"
+
+
+@pytest.mark.asyncio
+async def test_readiness_names_which_role_the_database_uses(issuer, monkeypatch):
+    """
+    Reports what the connection *is*, because configuration and reality came
+    apart once already: `marq_agent_ro` existed, looked configured, and had
+    no grants at all.
+    """
+
+    from app.api.routes import health as module
+
+    class Cursor:
+        async def execute(self, *a):
+            return None
+
+        async def fetchone(self):
+            return {"ok": 1}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    class Conn:
+        def cursor(self):
+            return Cursor()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    class Pool:
+        is_read_only = True
+
+        def connection(self):
+            return Conn()
+
+    monkeypatch.setattr(module, "app_db", Pool())
+
+    app, _ = build_app(verifier=issuer.verifier())
+
+    async with client(app) as http:
+        response = await http.get("/health/ready")
+
+    assert response.json()["database"]["detail"] == "read-only role"
+
+
+@pytest.mark.asyncio
+async def test_an_unconfigured_model_fails_readiness(
+    issuer, monkeypatch, stub_database
+):
+    """
+    A missing model endpoint is a configuration error, and it should stop
+    traffic rather than surface as a 500 on the first question.
+    """
+
+    from app.api.routes import health as module
+    from app.config import settings as real
+
+    monkeypatch.setattr(
+        module, "settings", real.model_copy(update={"model_base_url": ""})
+    )
+
+    app, _ = build_app(verifier=issuer.verifier())
+
+    async with client(app) as http:
+        response = await http.get("/health/ready")
+
+    body = response.json()
+
+    assert response.status_code == 503
+    assert body["model"]["ok"] is False
+    assert body["model"]["detail"] == "not configured"
+
+
+@pytest.mark.asyncio
+async def test_a_vector_index_that_raises_is_reported_not_fatal(
+    issuer, stub_database
+):
+    """
+    Qdrant being unreachable costs search only. Files still ingest, parse
+    and reconcile, so it is reported and does not gate readiness.
+    """
+
+    class BrokenService:
+        @property
+        def index(self):
+            raise RuntimeError("qdrant unreachable")
+
+    app, _ = build_app(
+        verifier=issuer.verifier(), workspace_service=BrokenService()
+    )
+
+    async with client(app) as http:
+        response = await http.get("/health/ready")
+
+    body = response.json()
+
+    assert body["vector_index"]["ok"] is False
+    assert body["vector_index"]["detail"] == "RuntimeError"
+    # Reported, but readiness still turns on database + checkpointer + model.
+    assert body["ready"] is True
+
+
+@pytest.mark.asyncio
+async def test_readiness_without_a_checkpointer_at_all(issuer, stub_database):
+    """The state before the lifespan has finished, or after a failed boot."""
+
+    app, _ = build_app(verifier=issuer.verifier())
+    app.state.checkpointer = None
+
+    async with client(app) as http:
+        response = await http.get("/health/ready")
+
+    body = response.json()
+
+    assert response.status_code == 503
+    assert body["checkpointer"]["ok"] is False
+    assert body["checkpointer"]["detail"] == "not initialised"
