@@ -540,6 +540,19 @@ nothing.
 
 `EXPOSE_PROVENANCE=false` withholds the field.
 
+**Provenance is kept with the conversation** (19 August 2026).
+`migrations/004_conversation_turns.sql` stores one row per completed turn,
+so reopening a conversation still shows the SQL behind each answer —
+without it a replayed number was back to being one the reader had to trust,
+which is the thing the feature exists to prevent.
+
+The turn index comes from the same statement that increments
+`turn_count`, inside one transaction: a turn counted without its provenance
+would shift every later index by one and pair answers with the wrong
+queries, which is worse than showing none. The foreign key cascades, so
+deleting a conversation cannot leave the SQL it asked of the CRM orphaned
+on disk.
+
 **A local UI** (added 19 August 2026). `app/api/static/index.html`, served at
 `/` by this API and built on The MarQ Communities brand — Playfair Display and
 Montserrat, the ivory/black split, gold rules, the Marquise diamond.

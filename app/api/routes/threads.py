@@ -91,12 +91,17 @@ async def get_thread(
         )
 
     saver = request.app.state.checkpointer.saver
+    thread_key = principal.thread_key(thread_id)
 
-    snapshot = await saver.aget_tuple(
-        {"configurable": {"thread_id": principal.thread_key(thread_id)}}
-    )
+    snapshot = await saver.aget_tuple({"configurable": {"thread_id": thread_key}})
+
+    # [claude] Stored per turn, in order. The Nth entry belongs to the Nth
+    # assistant message rendered below — which holds because a turn produces
+    # exactly one, and everything else is filtered out.
+    stored = await conversations.provenance_for(thread_key)
 
     messages = []
+    answered = 0
 
     if snapshot is not None:
         for message in snapshot.checkpoint.get("channel_values", {}).get(
@@ -113,7 +118,17 @@ async def get_thread(
             if role == "tool" or not isinstance(content, str) or not content:
                 continue
 
-            messages.append(Message(role=role, content=content))
+            records = []
+
+            if role == "assistant":
+                if answered < len(stored):
+                    records = stored[answered]
+
+                answered += 1
+
+            messages.append(
+                Message(role=role, content=content, provenance=records)
+            )
 
     return ConversationDetail(
         thread_id=row.thread_id,

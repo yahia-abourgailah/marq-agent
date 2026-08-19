@@ -14,6 +14,7 @@ without the scope is a method that eventually is.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -70,7 +71,8 @@ class ConversationRepository:
         thread_id: str,
         thread_key: str,
         title: str | None = None,
-    ) -> None:
+        provenance: list[dict[str, Any]] | None = None,
+    ) -> int:
         """
         Note that a turn completed on this conversation.
 
@@ -83,21 +85,50 @@ class ConversationRepository:
         the original. A conversation is named after the question that started
         it, and renaming it on every turn would make the list reorder itself
         under the user as they typed.
+
+        [claude] `provenance` is stored against the turn number the upsert
+        just produced, so reopening a conversation can still show the SQL
+        behind each answer. Both statements run on one connection inside a
+        transaction: a turn counted without its provenance would silently
+        shift every later turn's index by one, pairing answers with the wrong
+        queries — worse than having none.
+
+        Returns the new turn count.
         """
 
         async with self.pool.connection() as conn:
-            await conn.execute(
-                """
-                INSERT INTO conversations
-                    (thread_key, subject, thread_id, title, turn_count)
-                VALUES (%s, %s, %s, %s, 1)
-                ON CONFLICT (thread_key) DO UPDATE
-                SET turn_count = conversations.turn_count + 1,
-                    updated_at = now(),
-                    title      = COALESCE(conversations.title, EXCLUDED.title)
-                """,
-                (thread_key, subject, thread_id, title),
-            )
+            async with conn.transaction():
+                async with conn.cursor() as cursor:
+                    await cursor.execute(
+                        """
+                        INSERT INTO conversations
+                            (thread_key, subject, thread_id, title, turn_count)
+                        VALUES (%s, %s, %s, %s, 1)
+                        ON CONFLICT (thread_key) DO UPDATE
+                        SET turn_count = conversations.turn_count + 1,
+                            updated_at = now(),
+                            title      = COALESCE(
+                                conversations.title, EXCLUDED.title
+                            )
+                        RETURNING turn_count
+                        """,
+                        (thread_key, subject, thread_id, title),
+                    )
+
+                    turn_index = (await cursor.fetchone())["turn_count"]
+
+                    await cursor.execute(
+                        """
+                        INSERT INTO conversation_turns
+                            (thread_key, turn_index, provenance)
+                        VALUES (%s, %s, %s)
+                        ON CONFLICT (thread_key, turn_index) DO UPDATE
+                        SET provenance = EXCLUDED.provenance
+                        """,
+                        (thread_key, turn_index, json.dumps(provenance or [])),
+                    )
+
+        return turn_index
 
     async def list_for(
         self,
@@ -149,14 +180,45 @@ class ConversationRepository:
 
         return Conversation.from_row(row) if row else None
 
+    async def provenance_for(self, thread_key: str) -> list[list[dict[str, Any]]]:
+        """
+        The stored provenance for one conversation, in turn order.
+
+        [claude] Returned as a list indexed by turn rather than keyed by
+        message id, because the messages live in the checkpointer and carry
+        no id this table could reference. The Nth entry belongs to the Nth
+        assistant message a replay renders — which holds because a turn
+        produces exactly one, and `threads.py` filters the rest out.
+
+        Ownership is not checked here: the caller has already resolved the
+        thread_key from a row it proved belongs to this subject, and
+        thread_key is namespaced per subject anyway.
+        """
+
+        async with self.pool.connection() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(
+                    """
+                    SELECT provenance FROM conversation_turns
+                    WHERE thread_key = %s ORDER BY turn_index
+                    """,
+                    (thread_key,),
+                )
+
+                return [row["provenance"] for row in await cursor.fetchall()]
+
     async def delete(self, subject: str, thread_id: str) -> bool:
         """
         Forget one conversation. True if there was one to forget.
 
-        Removes the index row. The checkpoints themselves are deleted by the
-        route, which holds the saver — see app/api/routes/threads.py, and
-        note the ordering there: checkpoints first, index last, so a failure
-        leaves a listable conversation rather than an unreachable orphan.
+        Removes the index row, and the stored provenance with it — the
+        foreign key cascades, so deleting a conversation cannot leave the
+        SQL it asked of the CRM behind, unreachable and still on disk.
+
+        The checkpoints themselves are deleted by the route, which holds the
+        saver — see app/api/routes/threads.py, and note the ordering there:
+        checkpoints first, index last, so a failure leaves a listable
+        conversation rather than an unreachable orphan.
         """
 
         async with self.pool.connection() as conn:

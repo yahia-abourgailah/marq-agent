@@ -14,6 +14,7 @@ plumbing cannot drift apart, which is the part that matters.
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 
@@ -88,11 +89,14 @@ async def chat(
     # [claude] Recorded after the answer, not before. A question that raised
     # leaves no conversation in the user's list, so the list never contains a
     # thread with nothing in it.
+    records = provenance_of(collector)
+
     await conversations.record_turn(
         subject=principal.subject,
         thread_id=thread_id,
         thread_key=thread_key,
         title=make_title(body.message),
+        provenance=records,
     )
 
     return ChatResponse(
@@ -100,7 +104,7 @@ async def chat(
         answer=answer_of(messages),
         route=result.get("route"),
         tools_used=tools_used_in(messages),
-        provenance=provenance_of(collector),
+        provenance=records,
     )
 
 
@@ -134,6 +138,7 @@ async def chat_stream(
 
     async def events():
         answered = False
+        records: list = []
 
         async for event in stream_turn(
             graph=graph,
@@ -146,6 +151,11 @@ async def chat_stream(
             if event["event"] == "final":
                 answered = True
 
+                # [claude] Read back off the event rather than reaching for
+                # the collector, whose context has already been left by the
+                # time this generator resumes.
+                records = json.loads(event["data"]).get("provenance", [])
+
             yield event
 
         if answered:
@@ -154,6 +164,7 @@ async def chat_stream(
                 thread_id=thread_id,
                 thread_key=thread_key,
                 title=make_title(body.message),
+                provenance=records,
             )
 
     return EventSourceResponse(events())

@@ -590,7 +590,12 @@ async function openThread(id) {
   const c = await r.json();
   threadId = id;
   $("log").querySelector(".wrap").innerHTML = "";
-  c.messages.forEach(m => bubble(m.role === "user" ? "user" : "agent", m.content));
+  c.messages.forEach(m => {
+    const el = bubble(m.role === "user" ? "user" : "agent", m.content);
+    // [claude] The SQL is stored per turn now, so a reopened conversation
+    // is as checkable as a live one.
+    if (m.role !== "user") addProvenance(el, m.provenance);
+  });
   loadThreads();
 }
 function newChat() {

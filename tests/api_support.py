@@ -253,8 +253,12 @@ class FakeConversations:
     def __init__(self) -> None:
         self.rows: dict[tuple[str, str], Conversation] = {}
         self.keys: dict[tuple[str, str], str] = {}
+        # thread_key -> [provenance per turn], mirroring conversation_turns.
+        self.turns: dict[str, list] = {}
 
-    async def record_turn(self, subject, thread_id, thread_key, title=None):
+    async def record_turn(
+        self, subject, thread_id, thread_key, title=None, provenance=None
+    ):
         now = datetime.now(UTC)
         existing = self.rows.get((subject, thread_id))
 
@@ -278,6 +282,12 @@ class FakeConversations:
             )
 
         self.keys[(subject, thread_id)] = thread_key
+        self.turns.setdefault(thread_key, []).append(list(provenance or []))
+
+        return self.rows[(subject, thread_id)].turn_count
+
+    async def provenance_for(self, thread_key):
+        return self.turns.get(thread_key, [])
 
     async def list_for(self, subject, limit=50, offset=0):
         owned = [

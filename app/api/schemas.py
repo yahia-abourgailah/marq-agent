@@ -146,6 +146,16 @@ class Message(BaseModel):
     role: str = Field(description="user, assistant, or tool")
     content: str
 
+    provenance: list[QueryProvenance] = Field(
+        default_factory=list,
+        description=(
+            "The queries behind this answer, for assistant messages. Stored "
+            "per turn so reopening a conversation still shows how each "
+            "number was reached — without it a replayed answer is back to "
+            "being a figure the reader has to trust."
+        ),
+    )
+
 
 class ConversationDetail(BaseModel):
     thread_id: str
