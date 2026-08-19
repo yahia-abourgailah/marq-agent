@@ -79,7 +79,7 @@ docs/
   postman/             importable collection + environment
   logging_config.py    structured JSON logging
 main.py                HTTP entry point
-evals/                 behavioural cases for the SQL Agent
+evals/                 behavioural cases; complex_cases.py is the multi-hop suite
 scripts/               developer utilities, not imported by the app
 tests/
 ```

@@ -135,6 +135,7 @@ python -m evals.run             # 35 SQL cases
 python -m evals.graph_cases     # 18 whole-graph cases
 python -m evals.routing_cases   # 37 routing cases
 QDRANT_URL="" python -m evals.workspace_cases   # 8 workspace cases
+python -m evals.complex_cases   # 12 multi-hop cases, through the supervisor
 ruff check .
 langgraph dev                   # Studio: marq_agent + three domain graphs
 
@@ -578,6 +579,68 @@ Two things learned building it:
 - Retention is still unaddressed — see the workspace section. Uploads now
   arrive over HTTP, which makes it more pressing rather than less.
 
+
+## Complex questions — a fifth eval suite
+
+`evals/complex_cases.py`, added 19 August 2026. Twelve multi-hop,
+comparative and rate-based questions, run through
+`build_supervisor_graph()` — the production path, which the other graph
+suite skips.
+
+**8/12, identical three runs running.** The four failures are deterministic
+defects rather than flakiness, which is the most useful thing a new suite can
+produce.
+
+Half the first run's failures were **bad assertions of mine**, which is the
+ratio this file already predicts. Worth recording, because two of them were
+the same mistake:
+
+- `sla_breaches` and `stale_share` both hardcoded ground truth that ignored
+  `merged_into_id IS NULL`. `LEADS_RULES_ONLY` requires that filter for
+  questions about unique leads, the agent applied it correctly, and **the
+  eval was the thing that was wrong.** Exactly `owner_name_joins_users`
+  again: an eval is evidence about what someone believed.
+- `worst_rate` demanded the denominator (26) from an answer that correctly
+  said "franchise 12, 34.6%". Asserting the parts of a rate the agent chose
+  to express as a rate is asserting phrasing, not property.
+
+**Four real defects, all reproducible:**
+
+1. *"Qualified leads" is read as `qualification_status IS NOT NULL`.* That
+   includes `pending` and `unqualified` — 786 leads where 482 are actually
+   qualified. "Among qualified leads, how many have gone stale" answers
+   168 of 786 against a truth of 104 of 482, wrong by 60%. The catalogue
+   describes the column as "Lead qualification status" and never says the
+   verdict is one of its values.
+
+2. *The merged-duplicate rule is applied inconsistently.* The same agent
+   filters `merged_into_id IS NULL` for the SLA question (153 of 786,
+   correct) and omits it for a conversion count in the same session (42
+   where 38 is right). A rule followed most of the time is harder to
+   reason about than one followed never.
+
+3. *`SUM(area)` is refused while `AVG(area)` works.* "What is the total unit
+   area across all contracted deals" returns "not available in the CRM",
+   which is false — it is 61,053, and the agent computes an average over
+   the same varchar column without complaint in the case above. A wrong
+   "unavailable" is the mirror of an invented number: it withholds an answer
+   that exists.
+
+4. *A filter is silently dropped.* "Contracted **and residential** and area
+   above 250" becomes contracted-and-area-above-250: 117 where the truth is
+   90. This is the dangerous shape — a larger, entirely plausible number,
+   with no error anywhere.
+
+None are fixed. Each has a case that will keep failing until it is, which is
+the point.
+
+**One caveat on the suite itself.** `conversion_within_qualified_leads_only`
+names `converted_at` explicitly rather than asking "have they converted",
+because the fixture's `converted_at` and its deal linkage disagree almost
+entirely — 280 leads have a deal, 78 have a conversion date, 30 have both.
+`scripts/generate_fixture.py` sets `converted_at` at random instead of
+deriving it, so conversion questions have two defensible answers here. Worth
+fixing in the generator before anyone benchmarks against them.
 
 ## Recurring bug family: denominators
 
