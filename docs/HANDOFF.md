@@ -587,9 +587,9 @@ comparative and rate-based questions, run through
 `build_supervisor_graph()` — the production path, which the other graph
 suite skips.
 
-**8/12, identical three runs running.** The four failures are deterministic
-defects rather than flakiness, which is the most useful thing a new suite can
-produce.
+**12/12 after the fixes below**, three runs each. It first ran at 8/12, and
+the four failures were deterministic defects rather than flakiness — the most
+useful thing a new suite can produce.
 
 Half the first run's failures were **bad assertions of mine**, which is the
 ratio this file already predicts. Worth recording, because two of them were
@@ -631,8 +631,49 @@ the same mistake:
    90. This is the dangerous shape — a larger, entirely plausible number,
    with no error anywhere.
 
-None are fixed. Each has a case that will keep failing until it is, which is
-the point.
+**All four fixed in the catalogue, 19 August 2026**, and the fixes cost two
+lessons this file already teaches:
+
+*Widening a rule caused a regression the eval nearly missed.* Telling the
+agent "never refuse a total or an average of area" made it answer "what is
+the median unit area" **with an average** — 272.13, confidently, without
+mentioning the substitution. The case passed, because it only excluded the
+true median (270) and not the mean the agent reached for instead. A mean and
+a median differ exactly when the distribution is skewed, which is when
+someone asks for a median. The rule now says a median is unavailable and must
+not be approximated, and the assertion now rejects the average too.
+
+*The residential filter was a two-column ambiguity, not a dropped one.* After
+the first fix the agent stopped omitting the condition and started filtering
+`selling_type = 'primary'` instead — 98 where the truth is 90, and unstable
+between the two. `selling_type` is primary/resale, about new-versus-resold,
+and is independent of property type: primary contains both commercial and
+residential deals. This is `agent_id`/`owner_id` exactly — two columns that
+could answer one question, with nothing saying which. Fixed from **both**
+sides, because describing the mapping on `is_commercial` alone did nothing:
+the agent never looked there. `selling_type` now says what it is not.
+
+*Two graph cases moved with the merged-duplicate rule.* Broadening it changed
+every lead count: "leads created in the last 60 days" went 57 -> 50, and the
+conversion rate 31.67% -> 32.19%. Both cases keep the property they were
+written for — the window surviving the handoff, and conversion counting leads
+rather than deals — but their baselines moved, because 98 of 884 leads are
+merged duplicates of each other. **This is a business decision as much as a
+technical one:** "leads received" including duplicates is a defensible metric
+too. Consistency was chosen over case-by-case judgement, which demonstrably
+failed; reverting is one rule in `LEADS_RULES_ONLY`.
+
+**All five suites after the fixes**, three runs each unless noted:
+
+| Suite | Result |
+|---|---|
+| `evals.complex_cases` | 12/12 x3 |
+| `evals.graph_cases` | 18/18 x3 |
+| `evals.run` | 35/35 x3 |
+| `evals.routing_cases` | 37/37 x3 |
+| `evals.workspace_cases` | 8/8 x3 |
+| `pytest` | 722/722 |
+| `pytest -m integration` | 124/124 |
 
 **One caveat on the suite itself.** `conversion_within_qualified_leads_only`
 names `converted_at` explicitly rather than asking "have they converted",

@@ -172,13 +172,23 @@ GRAPH_CASES: tuple[GraphCase, ...] = (
     GraphCase(
         name="conversion_rate_counts_leads",
         question="What is our overall lead-to-deal conversion rate?",
-        answer_contains=("31",),
+        # [claude] Was "31" (31.67%). Now 32.19%, because the corrected
+        # merged-duplicate rule excludes merged leads from both sides —
+        # 253 distinct converting leads out of 786 unique ones, rather than
+        # 280 out of 884 where 98 of those leads are duplicates of each
+        # other.
+        #
+        # The property under test is unchanged and still the point: the
+        # numerator counts leads that produced a deal, never deals. 35.63%
+        # remains excluded, so an answer built from deal counts still fails.
+        answer_contains=("32",),
         answer_excludes=("35.63", "315 deals"),
         max_tool_calls=2,
         why=(
-            "Counting leads that produced a deal gives 31.67%. Dividing "
+            "Counting leads that produced a deal gives 32.19%. Dividing "
             "total deals by total leads gives 35.63% and double-counts any "
-            "lead with more than one deal."
+            "lead with more than one deal — and merged duplicates are not "
+            "separate leads, so they are excluded from both sides."
         ),
         tags=("analysis", "metrics"),
     ),
@@ -343,9 +353,15 @@ LEADS_GRAPH_CASES: tuple[GraphCase, ...] = (
         # today — the fixture had aged three days past the count baked in
         # here, so the eval failed a correct answer of 62. See
         # explicit_window_is_not_widened above.
+        # [claude] Now excludes merged duplicates, matching the corrected
+        # LEADS_RULES_ONLY. The case still tests exactly what it always
+        # tested — that the 60-day window survives the handoff, guarded by
+        # the 884 exclusion below — but its baseline moved when the merged
+        # rule stopped being a judgement call: 57 lead records were created,
+        # belonging to 50 distinct people.
         expected_from_sql=(
             "SELECT count(*) FROM leads "
-            "WHERE deleted_at IS NULL "
+            "WHERE deleted_at IS NULL AND merged_into_id IS NULL "
             "AND created_at >= CURRENT_DATE - INTERVAL '60 days'"
         ),
         answer_excludes=("884",),

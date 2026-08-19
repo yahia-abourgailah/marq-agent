@@ -146,7 +146,15 @@ DEALS_TABLE = Table(
         ),
         Column(
             "selling_type",
-            "Selling type. Allowed values are primary or resale.",
+            # [claude] Says what it is NOT, because it was being picked for
+            # "residential". Two columns could plausibly answer that word
+            # and only one is right — the same failure as agent_id/owner_id,
+            # where both described themselves as the deal owner and the SQL
+            # agent chose whichever it read first.
+            "Whether the unit is sold new by the developer or resold by an "
+            "owner. Allowed values are primary or resale. This is NOT the "
+            "property type: it says nothing about residential or commercial, "
+            "which is `is_commercial`.",
         ),
         Column(
             "delivery_date",
@@ -182,6 +190,8 @@ DEALS_TABLE = Table(
             "is_commercial",
             (
                 "Whether the deal is classified as commercial. "
+                "Residential is the opposite: `is_commercial = false`, not "
+                "a separate column or value. "
                 "Used by the commercial deal visibility scope."
             ),
         ),
@@ -338,7 +348,16 @@ LEADS_TABLE = Table(
         Column("cold_call_id", "Cold call ID."),
 
         # Qualification
-        Column("qualification_status", "Lead qualification status."),
+        # [claude] Values named, following `deals.status`. Without them the
+        # SQL agent read "qualified leads" as `qualification_status IS NOT
+        # NULL` — every lead that has been triaged at all, including the
+        # explicitly unqualified ones — and answered 786 where 482 are
+        # qualified.
+        Column(
+            "qualification_status",
+            "Lead qualification verdict. Allowed values are: qualified, "
+            "unqualified, pending.",
+        ),
         Column("qualification_score", "Lead qualification score."),
         Column("budget_status", "BANT budget status."),
         Column("authority_status", "BANT authority status."),
@@ -746,8 +765,44 @@ DEALS_RULES_ONLY = """\
   years ago. Drop it only when the user asks about past or overdue dates.
   There is no `expected_close_date` column.
 
-- `area` is varchar. Always `CAST(area AS numeric)` before ordering or
-  comparing it — otherwise '97' sorts above '446'.
+- [claude] `area` is varchar. Always `CAST(area AS numeric)` before
+  ordering, comparing **or aggregating** it — otherwise '97' sorts above
+  '446', and `SUM(area)` / `AVG(area)` fail outright with "function does not
+  exist".
+
+      SELECT sum(CAST(area AS numeric)) AS total_area
+      FROM deals
+      WHERE deleted_at IS NULL AND status = 'contracted' AND area IS NOT NULL
+
+  The cast makes SUM and AVG answerable, so never refuse a total or an
+  average of area. This rule previously said "ordering or comparing", and
+  the missing third verb was read as "area cannot be summed": "what is the
+  total unit area" came back "not available in the CRM" while the same agent
+  averaged the same column without complaint.
+
+  [claude] A median is **not** covered by this. `percentile_cont` and
+  `percentile_disc` are rejected by the guard, so a median or any percentile
+  of area is genuinely unavailable — say so and stop. Do not answer with the
+  average instead: substituting a mean for a median answers a question the
+  user did not ask, and the two differ precisely when the distribution is
+  skewed, which is when someone asks for a median. Widening the rule to
+  cover aggregation caused exactly this — "what is the median unit area"
+  came back with an average, confidently and without mentioning the
+  substitution.
+
+- [claude] "Residential" is `is_commercial = false`. There is no residential
+  column and no residential value anywhere else — in particular
+  `selling_type` is primary/resale, which is about new-versus-resold and is
+  independent of property type. Asked for "contracted residential deals
+  above 250 sqm", the agent filtered `selling_type = 'primary'` and answered
+  98 where the truth is 90: a wrong column applied confidently reads exactly
+  like the right one.
+
+- [claude] Every condition the user gives is part of the question. "Contracted
+  **and residential** and above 250 sqm" is three predicates, and dropping
+  one produces a larger number that still looks entirely reasonable — no
+  error, nothing to notice. If a condition maps to no column, say so; do not
+  answer the question that remains after silently discarding it.
 
 - `delivery_date` is a double precision year number such as 2027, not a
   timestamp. Compare it numerically; never apply date functions to it.
@@ -790,11 +845,28 @@ DEALS_RULES_ONLY = """\
 
 
 LEADS_RULES_ONLY = """\
-- Leads legitimately duplicate. When the user asks about unique leads,
-  unique demand, or distinct people, you MUST filter
-  `merged_into_id IS NULL`. `COUNT(DISTINCT id)` is not deduplication — it
-  counts merged duplicates as separate leads. `is_duplicated` marks a lead
-  that was merged away, not one that has duplicates.
+- [claude] Leads legitimately duplicate, so `merged_into_id IS NULL` belongs
+  in **every** count, rate or aggregate over leads — alongside
+  `deleted_at IS NULL`, and for the same reason. Omit it only when the user
+  is explicitly asking about duplicates or merges.
+
+      WHERE deleted_at IS NULL AND merged_into_id IS NULL
+
+  `COUNT(DISTINCT id)` is not deduplication — it counts merged duplicates as
+  separate leads. `is_duplicated` marks a lead that was merged away, not one
+  that has duplicates.
+
+  This rule used to fire only when the user asked about "unique leads,
+  unique demand, or distinct people", which is a judgement the query writer
+  had to make and got right about half the time — the same agent filtered
+  merged duplicates for an SLA count and omitted it for a conversion count
+  in the same session. Two different populations for two questions about
+  leads is worse than one wrong population consistently.
+
+- [claude] "Qualified leads" means `qualification_status = 'qualified'`. It
+  is a verdict with three values, so `IS NOT NULL` is every triaged lead
+  including the ones explicitly judged unqualified — a population 63% larger
+  than the one asked for. Same for "unqualified" and "pending".
 
 - `lead_stage_id` is a numeric id and its lookup table is not in SCHEMA.
   Group, count, order and filter by the id freely — "leads per stage" is

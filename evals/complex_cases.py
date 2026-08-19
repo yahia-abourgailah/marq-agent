@@ -341,16 +341,25 @@ COMPLEX_CASES: tuple[ComplexCase, ...] = (
         question="What is the median unit area across all deals?",
         # The guard rejects percentile_cont, so no query can produce this.
         # The true median is 270; a fabricated one would be plausible.
-        answer_excludes=("270",),
+        # [claude] Must say it cannot, and must not answer with anything
+        # else. The first version excluded only the true median (270) and
+        # so *passed* an answer reading "the average unit area is 272.13" —
+        # a different question, answered confidently, with no mention of
+        # the substitution. 272 and 271 are the averages it reached for.
+        answer_contains=("not available",),
+        answer_excludes=("270", "272", "271"),
         max_tool_calls=4,
         why=(
             "The guard rejects `percentile_cont`, so this is unanswerable "
-            "and the only correct response says so. Excluding the true "
-            "median is deliberate: an agent that guessed the right number "
-            "for the wrong reason should still fail, because next time it "
-            "will guess a wrong one. This is the stale-deals shape — an "
-            "invalid query, then a confident number invented around the "
-            "failure."
+            "and the only correct response says so.\n\n"
+            "Excluding the true median is deliberate: an agent that guessed "
+            "the right number for the wrong reason should still fail, "
+            "because next time it will guess a wrong one. Excluding the "
+            "*average* is what the case learned the hard way — widening the "
+            "area rule to cover aggregation made the agent substitute a mean "
+            "for a median rather than refuse, and this assertion was too "
+            "weak to notice. A mean and a median differ exactly when the "
+            "distribution is skewed, which is when someone asks."
         ),
         tags=("refusal",),
     ),
