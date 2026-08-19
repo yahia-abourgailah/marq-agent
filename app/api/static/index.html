@@ -266,6 +266,36 @@ textarea:focus { outline: none; border-color: var(--gold); background: #fff; }
 .send:disabled { opacity: .4; cursor: not-allowed; }
 .foot { text-align: center; margin-top: 10px; font-size: 10px; color: var(--ink-dim); letter-spacing: .06em; }
 
+/* the work, while it is happening */
+.stage {
+  display: flex; align-items: center; gap: 10px; padding: 2px 0 4px;
+  font-size: 11px; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--ink-dim);
+}
+.stage .orb {
+  width: 9px; height: 9px; flex: none; position: relative;
+}
+.stage .orb::before, .stage .orb::after {
+  content: ""; position: absolute; inset: 0; border-radius: 50%;
+  background: var(--gold);
+}
+.stage .orb::after { animation: pulse 1.5s ease-out infinite; }
+@keyframes pulse { 0% { transform: scale(1); opacity: .7 } 100% { transform: scale(2.6); opacity: 0 } }
+.stage .elapsed { margin-left: auto; font-variant-numeric: tabular-nums; opacity: .6; letter-spacing: .06em; }
+.stage.gone { display: none; }
+
+/* steps already completed, kept as a quiet trail */
+.trail { font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
+         color: var(--ink-dim); opacity: .55; margin-bottom: 8px; }
+.trail span:not(:last-child)::after { content: " ◇ "; color: var(--gold); opacity: .8; }
+
+/* the cursor that makes typing visible */
+.caret {
+  display: inline-block; width: 2px; height: 1.05em; background: var(--gold);
+  vertical-align: -0.16em; margin-left: 1px; animation: blink 1.05s steps(2) infinite;
+}
+@keyframes blink { 0%,50% { opacity: 1 } 50.1%,100% { opacity: 0 } }
+
 .spin { display: inline-block; animation: sp 1.1s linear infinite; color: var(--gold); }
 @keyframes sp { to { transform: rotate(360deg); } }
 .typing { display: inline-block; width: 7px; height: 15px; background: var(--gold);
@@ -407,6 +437,72 @@ function setPills(el, route, tools) {
   });
 }
 
+/* ------------------------------------------------------------------
+   Making the stream visible.
+
+   The transport genuinely streams — measured in the browser, 250 tokens
+   across 147 distinct arrival times. The problem is perceptual: a short
+   answer's tokens land inside ~20ms, which is faster than anyone can see,
+   so a real stream rendered raw looks exactly like a blob.
+
+   So text is drained at a readable pace rather than painted the instant it
+   arrives. The rate is adaptive: it clears whatever is queued within about
+   a second, so a long answer never lags behind the network — this slows
+   the *first* characters into view, never the last.
+   ------------------------------------------------------------------ */
+const TYPE_FLOOR = 55;      // characters per second, minimum
+const CATCH_UP   = 0.9;     // seconds allowed to clear a backlog
+
+class Typer {
+  constructor(el) {
+    this.el = el; this.queue = ""; this.shown = "";
+    this.ended = false; this.last = null; this.raf = null; this.onDone = null;
+  }
+  push(text) { this.queue += text; this.kick(); }
+  end(cb) { this.ended = true; this.onDone = cb; this.kick(); }
+  flush() {                       // used on error, or when the user moves on
+    this.shown += this.queue; this.queue = "";
+    this.paint(false); this.settle();
+  }
+  kick() { if (this.raf === null) this.raf = requestAnimationFrame(t => this.tick(t)); }
+  tick(now) {
+    this.raf = null;
+    const dt = this.last === null ? 1 / 60 : Math.min((now - this.last) / 1000, 0.25);
+    this.last = now;
+
+    if (this.queue.length) {
+      const rate = Math.max(TYPE_FLOOR, this.queue.length / CATCH_UP);
+      const take = Math.max(1, Math.round(rate * dt));
+      this.shown += this.queue.slice(0, take);
+      this.queue = this.queue.slice(take);
+      this.paint(true);
+    }
+    if (this.queue.length) this.kick();
+    else if (this.ended) { this.paint(false); this.settle(); }
+  }
+  paint(caret) {
+    this.el.textContent = this.shown;
+    if (caret) this.el.appendChild(document.createElement("span")).className = "caret";
+    scrollDown();
+  }
+  settle() { const cb = this.onDone; this.onDone = null; if (cb) cb(this.shown); }
+}
+
+/* What each tool is doing, in words a person would use. */
+const STAGE_NAMES = {
+  sql_query: "Querying the CRM",
+  workspace_files: "Looking at your files",
+  workspace_read_rows: "Reading the rows",
+  workspace_aggregate: "Totalling your file",
+  workspace_search: "Searching your documents",
+  compare_with_crm: "Reconciling against the CRM",
+  calculate_percentage: "Working out the percentage",
+  calculate_share: "Working out the share",
+  calculate_funnel: "Building the funnel",
+  compare_periods: "Comparing the periods",
+};
+const stageName = (t) => STAGE_NAMES[t] || t.replace(/_/g, " ");
+
 /* The agent writes light markdown — bold, bullets, the occasional heading.
    Rendering it here rather than showing raw asterisks. Deliberately tiny and
    escape-first: the answer contains CRM data and, in a reconciliation, text
@@ -489,8 +585,42 @@ async function send(preset) {
 
   const el = bubble("agent", "");
   const body = el.querySelector(".bubble");
-  body.innerHTML = '<span class="spin">◇</span>';
-  let first = true, route = null, tools = [];
+
+  // A trail of completed steps, and a live line for the one in progress.
+  const trail = document.createElement("div");
+  trail.className = "trail";
+  const stage = document.createElement("div");
+  stage.className = "stage";
+  stage.innerHTML = `<span class="orb"></span>
+                     <span class="stage-text">Reading your question</span>
+                     <span class="elapsed">0.0s</span>`;
+  el.insertBefore(trail, body);
+  el.insertBefore(stage, body);
+
+  const t0 = performance.now();
+  const ticking = setInterval(() => {
+    stage.querySelector(".elapsed").textContent =
+      ((performance.now() - t0) / 1000).toFixed(1) + "s";
+  }, 100);
+  const setStage = (t) => { stage.querySelector(".stage-text").textContent = t; };
+  // [claude] Consecutive repeats collapse to "×2". Two percentage
+  // calculations in a row is one fact about the turn, not two steps, and
+  // spelling it out twice reads as a stutter.
+  const addTrail = (t) => {
+    const last = trail.lastElementChild;
+    if (last && last.dataset.step === t) {
+      last.dataset.count = String(Number(last.dataset.count || 1) + 1);
+      last.textContent = t + " ×" + last.dataset.count;
+      return;
+    }
+    const s = document.createElement("span");
+    s.dataset.step = t; s.textContent = t;
+    trail.appendChild(s);
+  };
+  const endStage = () => { clearInterval(ticking); stage.classList.add("gone"); };
+
+  const typer = new Typer(body);
+  let route = null, tools = [], started = false, done = null;
 
   try {
     const res = await fetch("/v1/chat/stream", {
@@ -502,7 +632,7 @@ async function send(preset) {
     if (!res.ok) {
       let msg = res.status + " " + res.statusText;
       try { msg = (await res.json()).error.message; } catch {}
-      body.className = "bubble err"; body.textContent = msg;
+      endStage(); body.className = "bubble err"; body.textContent = msg;
       return;
     }
 
@@ -511,8 +641,8 @@ async function send(preset) {
     let buf = "", event = null;
 
     while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
+      const { value, done: fin } = await reader.read();
+      if (fin) break;
       buf += dec.decode(value, { stream: true });
       const lines = buf.split("\n");
       buf = lines.pop();
@@ -522,31 +652,55 @@ async function send(preset) {
         if (!line.startsWith("data:")) continue;
         let d; try { d = JSON.parse(line.slice(5).trim()); } catch { continue; }
 
-        if (event === "start") threadId = d.thread_id;
-        else if (event === "route") { route = d.route; setPills(el, route, tools); }
-        else if (event === "tool") { tools.push(d.name); setPills(el, route, tools); }
+        if (event === "start") { threadId = d.thread_id; setStage("Routing your question"); }
+
+        else if (event === "route") {
+          route = d.route; setPills(el, route, tools);
+          addTrail(route === "out_of_scope" ? "Outside the CRM" : "Sent to " + route);
+          setStage("Deciding what to look up");
+        }
+
+        else if (event === "tool") {
+          tools.push(d.name); setPills(el, route, tools);
+          if (tools.length > 1) addTrail(stageName(tools[tools.length - 2]));
+          setStage(stageName(d.name));
+        }
+
         else if (event === "token") {
-          if (first) { body.innerHTML = '<span class="typing"></span>'; first = false; }
-          body.textContent = (body.textContent || "") + d.text;
-          scrollDown();
+          if (!started) {
+            started = true;
+            if (tools.length) addTrail(stageName(tools[tools.length - 1]));
+            setStage("Writing the answer");
+          }
+          typer.push(d.text);
         }
+
         else if (event === "final") {
-          // [claude] Re-rendered from the complete answer rather than
-          // formatted as it streams: half a bold marker mid-token renders as
-          // stray asterisks, and a list is not a list until it ends.
-          const finalText = d.answer || body.textContent || "(no answer)";
-          body.innerHTML = renderMarkdown(finalText);
-          setPills(el, d.route || route, d.tools_used || tools);
-          addProvenance(el, d.provenance);
-          loadThreads();
+          done = d;
+          // Let the typer finish what it is showing, THEN swap in the
+          // formatted answer — reflowing markdown mid-type is jarring.
+          typer.end(() => {
+            endStage();
+            body.innerHTML = renderMarkdown(d.answer || typer.shown || "(no answer)");
+            setPills(el, d.route || route, d.tools_used || tools);
+            addProvenance(el, d.provenance);
+            loadThreads();
+          });
         }
+
         else if (event === "error") {
+          typer.flush(); endStage();
           body.className = "bubble err";
           body.textContent = d.message + (d.request_id ? "  ·  " + d.request_id : "");
         }
       }
     }
+
+    // The stream closed without a final event — show whatever arrived.
+    if (!done) { typer.end(() => endStage()); }
+
   } catch (e) {
+    typer.flush(); endStage();
     body.className = "bubble err";
     body.textContent = "Could not reach the agent — is it running?  (" + e.message + ")";
   } finally {
