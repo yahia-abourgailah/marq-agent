@@ -298,3 +298,80 @@ async def test_readiness_without_a_checkpointer_at_all(issuer, stub_database):
     assert response.status_code == 503
     assert body["checkpointer"]["ok"] is False
     assert body["checkpointer"]["detail"] == "not initialised"
+
+
+# ============================================================
+# The local UI
+# ============================================================
+
+
+@pytest.mark.asyncio
+async def test_the_ui_is_served_at_the_root(issuer):
+    """
+    Served by the API itself, which is the point: same-origin, so it works
+    with `CORS_ORIGINS` empty and cannot be broken by a missing entry.
+    """
+
+    app, _ = build_app(verifier=issuer.verifier())
+
+    async with client(app) as http:
+        response = await http.get("/")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert "MARQ" in response.text
+    # Talks to the real endpoints rather than a mock.
+    assert "/v1/chat/stream" in response.text
+
+
+@pytest.mark.asyncio
+async def test_the_ui_needs_no_token_but_carries_no_data(issuer):
+    """
+    The page is static and holds no secrets — every request it makes still
+    needs a verified token. Asserted so nobody later "helpfully" embeds one.
+    """
+
+    app, _ = build_app(verifier=issuer.verifier())
+
+    async with client(app) as http:
+        response = await http.get("/")
+
+    body = response.text
+
+    assert "Bearer ey" not in body
+    assert "BEGIN PRIVATE KEY" not in body
+    assert "postgres" not in body.lower()
+
+
+def test_the_ui_can_be_switched_off(issuer, monkeypatch):
+    """
+    Off in production: the front end there is the company website, and two
+    UIs answering on one host is a way to confuse whoever is debugging.
+    """
+
+    from app.api import app as module
+    from app.config import settings as real
+
+    monkeypatch.setattr(
+        module, "settings", real.model_copy(update={"serve_ui": False})
+    )
+
+    api = module.create_app()
+
+    assert not any(getattr(r, "path", None) == "/" for r in api.routes)
+
+
+@pytest.mark.asyncio
+async def test_the_ui_never_shadows_an_api_route(issuer):
+    """
+    Registered last and only at `/`, so mounting it cannot capture a route
+    the front end depends on.
+    """
+
+    app, _ = build_app(verifier=issuer.verifier())
+
+    paths = set(app.openapi()["paths"])
+
+    assert "/v1/chat" in paths
+    assert "/health/ready" in paths
+    assert "/" not in paths  # excluded from the schema, and not an API route

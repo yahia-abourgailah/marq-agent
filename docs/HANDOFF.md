@@ -540,6 +540,28 @@ nothing.
 
 `EXPOSE_PROVENANCE=false` withholds the field.
 
+**A local UI** (added 19 August 2026). `app/api/static/index.html`, served at
+`/` by this API and built on The MarQ Communities brand — Playfair Display and
+Montserrat, the ivory/black split, gold rules, the Marquise diamond.
+
+One static file, no build step, no npm. Served by the API on purpose: that
+makes it same-origin, so it works with `CORS_ORIGINS` empty and cannot be
+broken by a missing entry — the one configuration gap left open.
+
+It streams over SSE, uploads by drag-and-drop, lists and replays
+conversations, and puts the `provenance` SQL one click under every answer,
+which is where that feature belongs: a number a user can check rather than
+one they must trust. Agent markdown is rendered by a deliberately tiny
+escape-first formatter — the text includes CRM rows and, in a reconciliation,
+content from a file a third party wrote, so it is never trusted as HTML.
+
+`SERVE_UI=false` removes the route. Off in production, where the front end is
+the company website.
+
+Verified in a browser rather than by reading the HTML: a franchise question
+answered 12 at 34.62% with its SQL shown, and the reconciliation replayed
+17/3/2 against the planted demo file.
+
 **Testing it without a front end.** There is no token issuer yet, so
 `scripts/dev_token.py` stands in for one: it keeps a development keypair
 under `var/` (gitignored, `0600`) and signs tokens the API verifies exactly as

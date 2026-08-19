@@ -206,6 +206,25 @@ class Settings(BaseSettings):
     auth_dev_mode: bool = False
 
     # ----------------------------------------------------------
+    # Local UI
+    # ----------------------------------------------------------
+    #
+    # [claude] Serves app/api/static/index.html at `/`.
+    #
+    # A single file with no build step, served by this API so it is
+    # same-origin — which is why it needs no CORS entry and cannot be
+    # broken by one being missing. It is a development tool: it talks to
+    # the same endpoints the real front end will, so it doubles as a way to
+    # see the API behave rather than reading JSON.
+    #
+    # Off in production. Not because the page is dangerous — it is static
+    # and holds no secrets, and every request it makes still needs a
+    # verified token — but because the production deployment's front end is
+    # the company website, and two UIs answering on one host is a way to
+    # confuse whoever is debugging at 2am.
+    serve_ui: bool = True
+
+    # ----------------------------------------------------------
     # Answer provenance
     # ----------------------------------------------------------
     #

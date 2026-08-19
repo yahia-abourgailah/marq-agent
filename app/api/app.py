@@ -24,9 +24,11 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from app.api.errors import install_error_handlers, new_request_id
 from app.api.routes import chat, health, threads, workspace
@@ -174,6 +176,26 @@ def create_app() -> FastAPI:
     api.include_router(chat.router, prefix=prefix)
     api.include_router(threads.router, prefix=prefix)
     api.include_router(workspace.router, prefix=prefix)
+
+    # ----------------------------------------------------------
+    # The local UI
+    # ----------------------------------------------------------
+    #
+    # [claude] Registered last, and only when enabled, so it can never
+    # shadow an API route. Same-origin by construction, which is what
+    # keeps it working with `CORS_ORIGINS` empty.
+    if settings.serve_ui:
+        index = Path(__file__).parent / "static" / "index.html"
+
+        if index.is_file():
+
+            @api.get("/", include_in_schema=False)
+            async def ui() -> FileResponse:
+                # no-store: the file changes as it is being worked on, and a
+                # cached copy of a half-finished UI is a confusing bug report.
+                return FileResponse(
+                    index, headers={"Cache-Control": "no-store"}
+                )
 
     return api
 

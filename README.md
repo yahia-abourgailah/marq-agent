@@ -65,6 +65,7 @@ app/
     checkpointer.py    conversation persistence (PostgreSQL, or in-memory)
   api/
     app.py             create_app(), the lifespan, CORS, request ids
+    static/index.html  the local UI — one file, no build step
     routes/            chat (JSON + SSE), threads, workspace, health
     streaming.py       graph run -> SSE events, and the token filter
     deps.py            request-scoped dependencies
@@ -165,6 +166,12 @@ safe because conversations live in PostgreSQL rather than in process memory:
 ```bash
 uvicorn main:app --host 0.0.0.0 --workers 4
 ```
+
+Then open **http://localhost:8000** — a local UI in The MarQ's brand, with
+streaming answers, drag-and-drop file upload, conversation history, and the
+SQL behind every answer one click away. It is a single static file served by
+this API, so it is same-origin and needs no CORS entry. `SERVE_UI=false`
+turns it off; production serves the company website instead.
 
 **Testing it by hand — Postman, curl, known-good answers, and what to do when
 something fails: [docs/TESTING.md](docs/TESTING.md).** A ready-made Postman
