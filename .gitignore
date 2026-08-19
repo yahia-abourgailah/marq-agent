@@ -241,3 +241,10 @@ node_modules/
 # repository full of someone's contracts.
 var/workspace/
 
+# [claude] Development JWT signing key, written by scripts/dev_token.py.
+#
+# `var/` is already ignored above, and this is restated for the same reason
+# var/workspace/ is: the private key signs identities this API trusts, and
+# the cost of that template line being pruned one day is a signing key in a
+# public repository.
+var/dev-jwt/

@@ -1,0 +1,825 @@
+{
+  "info": {
+    "_postman_id": "55255f16-0ce8-4958-bb1b-7ebeb4dbe24d",
+    "name": "MarQ Agent API",
+    "description": "Conversational access to the MyTAI CRM, plus a per-user workspace for uploaded files.\n\n## Setup\n\n1. Start the API:  `python main.py`\n2. Mint a token:   `python scripts/dev_token.py mint`\n3. Paste it into the `token` environment variable.\n\nSelect the **MarQ Agent \u2014 local** environment before sending anything.\n\n## Notes\n\n- Auth is Bearer at the collection level; every request inherits it.\n- `thread_id` and `file_id` are captured automatically by test scripts, so run *Ask a question* before the Threads folder.\n- The identity (`requester_id`, `workspace_id`) comes from the token and is refused if sent in a body \u2014 see **Negative tests**.\n- **SSE:** Postman buffers `text/event-stream` rather than showing live frames. Use `curl -N` to watch a stream properly; the command is in the *Ask a question (streaming)* description.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://127.0.0.1:8000"
+    },
+    {
+      "key": "thread_id",
+      "value": ""
+    },
+    {
+      "key": "file_id",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "description": "Unauthenticated probes.",
+      "item": [
+        {
+          "name": "Liveness",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/health",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
+            "description": "Does no I/O and needs no token. A liveness probe that touches the database restarts a healthy process when a dependency blips.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"ok\", () => pm.expect(pm.response.json().status).to.eql(\"ok\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Readiness",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/health/ready",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "health",
+                "ready"
+              ]
+            },
+            "description": "What is actually reachable, not what is configured.\n\n`vector_index` reports false when Qdrant is not running \u2014 that is expected here and does NOT block readiness: search degrades while reconciliation and the CRM agent keep working.\n\n`checkpointer` false means conversations would not survive a restart.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"reports every component\", () => {",
+                  "  const b = pm.response.json();",
+                  "  [\"database\",\"checkpointer\",\"model\",\"vector_index\"].forEach(k => pm.expect(b).to.have.property(k));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Chat",
+      "item": [
+        {
+          "name": "Ask a question",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/chat",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "chat"
+              ]
+            },
+            "description": "Runs a full turn and waits for the answer. Takes a few seconds \u2014 two to three model calls.\n\nGround truth on the dev fixture: **315** deals.\n\nCaptures `thread_id` into the environment, so the next requests continue this conversation.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"How many deals are there in total?\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.collectionVariables.set(\"thread_id\", b.thread_id);",
+                  "pm.test(\"answered\", () => pm.expect(b.answer).to.not.be.empty);",
+                  "pm.test(\"routed\", () => pm.expect([\"deals\",\"leads\",\"workspace\",\"out_of_scope\"]).to.include(b.route));",
+                  "console.log(\"route:\", b.route, \"| tools:\", b.tools_used);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Follow-up (same thread)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/chat",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "chat"
+              ]
+            },
+            "description": "Proves conversation memory. Because checkpoints live in PostgreSQL, this works even if you restart the server between the two requests \u2014 try it.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"What number did you just tell me?\",\n  \"thread_id\": \"{{thread_id}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "console.log(pm.response.json().answer);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ask a question (streaming)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/chat/stream",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "chat",
+                "stream"
+              ]
+            },
+            "description": "Server-Sent Events: `start`, `route`, `tool`, many `token`, then `final`.\n\n**Postman buffers this** and shows one blob at the end rather than live frames. To watch it properly:\n\n```\ncurl -N -X POST http://127.0.0.1:8000/v1/chat/stream \\\n  -H 'Content-Type: application/json' \\\n  -H \"Authorization: Bearer $(python scripts/dev_token.py mint)\" \\\n  -d '{\"message\":\"Which franchise has the most cancellations?\"}'\n```\n\nThe routing decision and the SQL the agent generates are filtered out before they reach the wire.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"Which franchise has the most cancellations?\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"streams SSE\", () => pm.expect(pm.response.text()).to.include(\"event: final\"));",
+                  "pm.test(\"never leaks generated SQL\", () => {",
+                  "  const tokens = pm.response.text().split(\"\\n\")",
+                  "    .filter(l => l.startsWith(\"data:\"))",
+                  "    .map(l => { try { return JSON.parse(l.slice(5)).text || \"\"; } catch (e) { return \"\"; } })",
+                  "    .join(\"\");",
+                  "  pm.expect(tokens).to.not.include(\"SELECT\");",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Out of scope",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/chat",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "chat"
+              ]
+            },
+            "description": "Declines in one line without spending a database round-trip. `route` comes back as `out_of_scope`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"What is the weather in Cairo today?\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"declined\", () => pm.expect(pm.response.json().route).to.eql(\"out_of_scope\"));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Threads",
+      "description": "Conversation history. Run a chat request first.",
+      "item": [
+        {
+          "name": "List conversations",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/threads?limit=20&offset=0",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "threads"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
+              ]
+            },
+            "description": "Yours only, most recently updated first. Another employee's conversations are not here and cannot be reached."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "console.log(pm.response.json().conversations.map(c => c.thread_id));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get one conversation",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/threads/{{thread_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "threads",
+                "{{thread_id}}"
+              ]
+            },
+            "description": "Replays the transcript. Raw tool results are deliberately omitted \u2014 they are CRM rows, and the answer that quoted them is already in the transcript."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete a conversation",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/threads/{{thread_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "threads",
+                "{{thread_id}}"
+              ]
+            },
+            "description": "Removes the checkpoints first, then the index row. Deletes messages too \u2014 re-run *Ask a question* afterwards."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Workspace",
+      "description": "Uploaded files. Select a real .xlsx / .csv / .pdf in the upload request's Body tab.",
+      "item": [
+        {
+          "name": "Upload a file",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/workspace/files",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "workspace",
+                "files"
+              ]
+            },
+            "description": "**Pick a file in the Body tab before sending** \u2014 Postman cannot store one in an exported collection.\n\nRe-uploading the same filename supersedes the previous copy, vectors and all.\n\nThe file lands in *your* workspace, derived from your token. Nobody else can see it.",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": [],
+                  "description": ".xlsx .xlsm .csv .tsv or .pdf, up to 25 MB"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 201\", () => pm.response.to.have.status(201));",
+                  "const b = pm.response.json();",
+                  "pm.collectionVariables.set(\"file_id\", b.file.file_id);",
+                  "console.log(\"sheets:\", JSON.stringify(b.file.sheets));",
+                  "if (b.warnings.length) console.warn(\"warnings:\", b.warnings);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List files",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/workspace/files",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "workspace",
+                "files"
+              ]
+            },
+            "description": "Everything in your workspace."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ask about the file",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/chat",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "chat"
+              ]
+            },
+            "description": "Routes to `workspace`. Watch `tools_used`: it should use `workspace_aggregate`, not `workspace_search` \u2014 totalling search results would be a sampling error dressed as an answer.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"What is the total area in my uploaded spreadsheet, and how many rows does it have?\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "console.log(\"tools:\", pm.response.json().tools_used);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete a file",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/workspace/files/{{file_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "workspace",
+                "files",
+                "{{file_id}}"
+              ]
+            },
+            "description": "Removes the file and its vectors."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Negative tests",
+      "description": "The boundaries. All of these SHOULD fail \u2014 that is the point.",
+      "item": [
+        {
+          "name": "No token -> 401",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/chat",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "chat"
+              ]
+            },
+            "description": "Every route that touches data requires a token.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"How many deals?\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 401\", () => pm.response.to.have.status(401));",
+                  "pm.test(\"code\", () => pm.expect(pm.response.json().error.code).to.eql(\"unauthorized\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Garbage token -> 401",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer not.a.real.token"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/chat",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "chat"
+              ]
+            },
+            "description": "Signature verification. The message is identical to every other auth failure on purpose \u2014 distinguishing them tells an attacker which half of a guess was right.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"How many deals?\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 401\", () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "workspace_id in body -> 422",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/chat",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "chat"
+              ]
+            },
+            "description": "Identity is never a request field. Refused rather than ignored: an ignored field returns 200 with an answer computed from your own identity, so the frontend concludes it works and the mistake surfaces much later.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"How many deals?\",\n  \"workspace_id\": \"someone-elses-workspace\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 422\", () => pm.response.to.have.status(422));",
+                  "pm.test(\"names the offending field\", () => pm.expect(pm.response.text()).to.include(\"workspace_id\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "requester_id in body -> 422",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/chat",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "chat"
+              ]
+            },
+            "description": "Same rule. This id becomes `app.requester_id` in PostgreSQL and decides which rows row-level security returns.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"How many deals?\",\n  \"requester_id\": \"someone-else\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 422\", () => pm.response.to.have.status(422));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Empty message -> 422",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/chat",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "chat"
+              ]
+            },
+            "description": "Body validation.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 422\", () => pm.response.to.have.status(422));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Someone else's thread -> 404",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/threads/definitely-not-yours",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "threads",
+                "definitely-not-yours"
+              ]
+            },
+            "description": "404, not 403 \u2014 a 403 would confirm which thread ids exist."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 404\", () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

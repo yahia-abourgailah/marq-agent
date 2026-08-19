@@ -1,6 +1,6 @@
 # marq-agent — handoff
 
-State as of `dev`, 18 August 2026.
+State as of `dev`, 18 August 2026 (API layer added later the same day).
 Read this first in a new session; it replaces having the previous conversation.
 
 ---
@@ -13,6 +13,11 @@ domain specialist; the specialist reaches CRM data through one guarded tool and
 never writes SQL itself.
 
 ```
+website front end
+      |  HTTPS + JWT bearer
+      v
+FastAPI (app/api)  -- auth, identity, limits, SSE
+      |
 __start__ -> supervisor -+-> deals_agent      -> __end__
                          +-> leads_agent      -> __end__
                          +-> workspace_agent  -> __end__
@@ -51,7 +56,16 @@ tools, and compares the two sides in Python.
 | `app/workspace/service.py` | Composes the above; what the tools call |
 | `scripts/generate_fixture.py` · `schema_types.py` | Generate the test database from the catalogue |
 | `evals/` | `cases.py` (SQL), `graph_cases.py`, `routing_cases.py`, `workspace_cases.py` + `workspace_fixture.py` |
-| `scripts/workspace.py` | CLI: upload, list, search, ask, delete — no HTTP layer yet |
+| `scripts/workspace.py` | CLI: upload, list, search, ask, delete |
+| `main.py` | **HTTP entry point.** `python main.py`, or `uvicorn main:app` |
+| `app/api/app.py` | `create_app()`, the lifespan, CORS, request ids |
+| `app/api/routes/` | `chat.py` (JSON + SSE) · `threads.py` · `workspace.py` · `health.py` |
+| `app/api/streaming.py` | Graph run -> SSE events, and the token filter |
+| `app/api/deps.py` · `errors.py` · `schemas.py` | Dependencies, typed errors, bodies |
+| `app/auth/` | `jwt.py` (bearer verification) · `principal.py` (identity) |
+| `app/db/state.py` | The **writable** pool — checkpoints and the conversation index |
+| `app/db/repositories/conversations.py` | Which threads belong to which employee |
+| `app/logging_config.py` | Structured JSON logging; honours `LOG_LEVEL` |
 
 ## Key design decisions (do not undo without reason)
 
@@ -123,6 +137,13 @@ python -m evals.routing_cases   # 37 routing cases
 QDRANT_URL="" python -m evals.workspace_cases   # 8 workspace cases
 ruff check .
 langgraph dev                   # Studio: marq_agent + three domain graphs
+
+AUTH_DEV_MODE=true python main.py          # HTTP API on 127.0.0.1:8000
+curl localhost:8000/health/ready           # what is actually reachable
+curl -X POST localhost:8000/v1/chat \
+  -H 'Content-Type: application/json' \
+  -H 'X-Debug-Subject: alice@example.com' \
+  -d '{"message":"How many deals are there in total?"}'
 python scripts/generate_fixture.py         # regenerate test DB (byte-stable)
 python scripts/generate_fixture.py --stats
 ```
@@ -131,9 +152,9 @@ python scripts/generate_fixture.py --stats
 
 | Suite | Result | Was (16 Aug) |
 |---|---|---|
-| `pytest` | 594/594 | 252 |
-| `pytest -m integration` | 113/113 | never run whole |
-| `pytest -m ""` (everything) | 655/655, **93% coverage** | never measured |
+| `pytest` | 707/707 | 252 |
+| `pytest -m integration` | 124/124 | never run whole |
+| `pytest -m ""` (everything) | 831/831, **93% coverage** | never measured |
 | `ruff check .` | clean | clean |
 | `evals.routing_cases` | 37/37 ×3 runs | 37/37 |
 | `evals.graph_cases` | 18/18 ×3 runs | 12/15 |
@@ -145,6 +166,28 @@ The ×3 columns are the point: each suite was run three times and the failures
 counted, not run once until green. SQL, graph and routing produced **nine
 consecutive clean runs with zero failures** — the first time this project has
 had a measured stability figure rather than a single observation.
+
+**`test_prompt_behaviour::test_workspace_cases` is latency-sensitive**
+(observed 18 August 2026). It runs all eight workspace cases sequentially in
+one test — by far the most model calls of any single test — and
+`get_model()` uses `timeout=30, max_retries=2`, so it is the first thing to
+break when the shared vLLM endpoint is slow.
+
+Counted rather than guessed, because it first looked like a change had broken
+it:
+
+| `pytest -m ""` | wall time | result |
+|---|---|---|
+| A | 176s | 1 failed (`APITimeoutError`) |
+| B | 166s | 1 failed (`AssertionError`) |
+| C | 78s | 831 passed |
+| the case alone, ×3 | ~37s each | passed 3/3 |
+
+It tracks **run duration, not code** — the same work varying twofold in wall
+time, failing two different ways. A slow run fails it; a fast run does not.
+Do not chase this as a logic bug without first checking how long the run
+took. If it needs fixing, the lever is splitting it into eight tests or
+raising the model timeout, not the prompt.
 
 **The eval suites are not deterministic**, despite `model_temperature=0.0` —
 vLLM's continuous batching makes greedy decoding non-reproducible. Re-run
@@ -353,10 +396,161 @@ real PDF: total area 1,237 computed exactly, and a planted 205-vs-195
 discrepancy caught through `compare_with_crm` — neither possible when the
 figures could only be quoted from a search.
 
-**Not wired up:** there is no upload endpoint. `app/api/` is still empty. Files
-enter through `WorkspaceService.ingest()` / `ingest_path()`, which is what the
-tests and scripts use. This was a deliberate scope decision, not an oversight —
-the endpoints wrap the service without reworking it.
+**Wired up as of 18 August 2026.** `POST /v1/workspace/files` is the upload
+endpoint; it wraps `WorkspaceService.ingest()` without reworking it, exactly as
+planned. Ingest runs off the event loop (`anyio.to_thread`) because parsing and
+embedding are synchronous and CPU-bound — inline, one upload would stall every
+other request on that worker. See "The HTTP API".
+
+## The HTTP API
+
+Added 18 August 2026. This is the layer between the company website and the
+agent — the thing `app/api/` was an empty placeholder for.
+
+```
+POST   /v1/chat                   ask, wait for the whole answer
+POST   /v1/chat/stream            the same turn as Server-Sent Events
+GET    /v1/threads                this caller's conversations
+GET    /v1/threads/{id}           replay one
+DELETE /v1/threads/{id}           forget one, messages and all
+POST   /v1/workspace/files        upload
+GET    /v1/workspace/files        list
+DELETE /v1/workspace/files/{id}   delete
+GET    /health                    liveness, no I/O, no token
+GET    /health/ready              what is actually reachable
+```
+
+**Identity comes from the token and nowhere else.** This is the layer the
+handoff kept deferring `requester_id` and `workspace_id` to, and both are now
+closed:
+
+| | Where it comes from |
+|---|---|
+| `requester_id` | the JWT subject claim, verified at the edge |
+| `workspace_id` | `sha256(subject)[:32]`, derived — never sent by the caller |
+| checkpointer `thread_id` | `Principal.thread_key()`, namespaced per subject |
+
+Three decisions inside that worth not undoing:
+
+1. **The request models set `extra="forbid"`.** Sending `workspace_id` in the
+   body is a 422, not a silently ignored field. An ignored field returns 200
+   with an answer computed from the caller's own identity, so the front end
+   concludes it works and the mistake surfaces much later as a user seeing
+   data they should not.
+
+2. **The workspace id is hashed, not the subject itself.** `WorkspaceStore`
+   validates against `^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`, and a realistic
+   subject (`user@example.com`, `auth0|abc123`) fails that pattern — so the
+   naive version breaks for real tokens, and only for some users. It also
+   keeps email addresses out of directory names, backups and stack traces.
+   One workspace per employee; a user with several would need an ownership
+   table.
+
+3. **Thread ids are namespaced, not checked.** There is no path that forgets
+   the check because there is no unnamespaced key. Two employees may both
+   call a thread "today".
+
+**The stream filter was measured, not assumed.** Streaming the raw event feed
+of "How many deals are there in total?" emits tokens from two sources the user
+must never see:
+
+    node='supervisor'  ->  'deals'                              the route
+    node='model'       ->  'SELECT count(*) AS deals_count ...' the SQL agent
+
+`model` is *also* the node the final answer comes from, so filtering by node
+name alone shows the user generated SQL. What separates them is the tool
+boundary — the SQL agent runs between `on_tool_start` and `on_tool_end`. The
+rule is therefore "emit only when not inside a tool and not in the
+supervisor", and with it that question streams exactly
+`There are 315 deals in total.`
+
+**Verified end to end against the real stack**, not only against stubs:
+
+- `/v1/chat` answered "315 deals", matching `SELECT count(*) FROM deals WHERE
+  deleted_at IS NULL` exactly.
+- A conversation **survived a process restart** — asked "what number did you
+  just tell me?" in a brand-new process, it recalled 315 from PostgreSQL.
+  This is the thing `InMemorySaver` could not do.
+- A real `.xlsx` built from 12 live CRM rows uploaded, superseded a previous
+  upload of the same name, and the agent answered "12 rows, 2,764 sqm" — the
+  exact total — using `workspace_aggregate` rather than search.
+- Cross-user isolation: a second subject saw no threads, no files, and got
+  404 on both.
+
+**Two bugs the hermetic tests did not catch**, both found by running the real
+server. Worth reading, because they are the same shape as everything else in
+this file:
+
+1. *The stream died on every request.* Two `on_chain_end` events carry
+   `langgraph_node == "supervisor"`, and their outputs are **different
+   shapes** — an unnamed inner one returning the bare string `'deals'`, and
+   the node itself returning `{'route': 'deals'}`. The handler assumed the
+   dict and called `.get()` on a `str`. The stub emitted the shape I believed
+   in rather than the shape that exists, so 19 tests passed and the first
+   real request failed. The stub now emits **both** events, and reverting the
+   fix fails three tests.
+
+2. *`Database` could not be reopened.* `close()` set `_opened = False` under a
+   comment reading "allow reopening after close" — but a psycopg pool is
+   single-use and raises `PoolClosed` on any later use. The flag was reset
+   while the pool underneath stayed dead. Nothing had hit it because `app_db`
+   is a module-level singleton production opens once; it broke the moment the
+   boot test started the application twice in one process. `connect()` now
+   rebuilds the pool. **A comment claimed a capability the object did not
+   have** — the same failure as `marq_agent_ro`, which existed and could read
+   nothing.
+
+**Conversation storage is split in two on purpose.** The checkpointer holds
+the messages; `conversations` (migrations/003) holds ownership and metadata.
+The checkpointer's tables are keyed by `thread_id` with no notion of an
+owner, so it can answer neither "which conversations does this employee
+have?" nor "does this employee own this thread?".
+
+**The writable pool is not `app_db`.** `app_db` connects as the read-only role
+when one is configured, which cannot create the checkpoint tables. Handing it
+the checkpointer would fail on any environment that configured itself
+correctly and work on a developer machine that had not — the security posture
+and the deployment punished for it exactly inverted. See `app/db/state.py`.
+
+**Testing it without a front end.** There is no token issuer yet, so
+`scripts/dev_token.py` stands in for one: it keeps a development keypair
+under `var/` (gitignored, `0600`) and signs tokens the API verifies exactly as
+it will verify real ones. `AUTH_DEV_MODE=true` remains available but is a
+*bypass* — it runs no signature, expiry, issuer or audience check, so testing
+only that leaves the verification code unexecuted until the website's first
+token arrives.
+
+`docs/postman/` holds an importable collection (19 requests, 5 folders) and
+`docs/openapi.json` is the exported contract for the front-end team. The
+collection doubles as a headless suite — run it with newman; 23 assertions
+pass against a live server. See `docs/TESTING.md`.
+
+Two things learned building it:
+
+- *A script named `token.py` breaks the interpreter.* `scripts/` goes on
+  `sys.path` ahead of the standard library when a script there runs, so
+  `tokenize` — imported by `inspect`, by `dataclasses`, by `cryptography` —
+  picked up the new file and died with a circular-import `AttributeError`
+  naming `inspect`, which points nowhere near the cause. Renamed
+  `dev_token.py`. Same reason `app/logging_config.py` is not `logging.py`.
+- *Postman buffers SSE.* It shows one blob at the end rather than live
+  frames, so `POST /v1/chat/stream` looks broken there when it is not. Use
+  `curl -N`. Documented in the collection itself, at the request.
+
+**Not built at this layer:**
+
+- **No refresh, revocation or key rotation.** Tokens are verified against one
+  statically configured key. A JWKS endpoint with caching is the usual next
+  step and is not here.
+- **No rate limiting.** A single caller can occupy every worker with slow
+  model calls. `redis` is already a dependency and is still imported by
+  nothing.
+- **`/v1/chat` has no timeout of its own.** A turn is bounded only by the
+  step ceiling and the model client's own 30s-per-call timeout.
+- **The workspace is one per employee.** No sharing, no team workspaces.
+- Retention is still unaddressed — see the workspace section. Uploads now
+  arrive over HTTP, which makes it more pressing rather than less.
+
 
 ## Recurring bug family: denominators
 
@@ -372,6 +566,27 @@ Fixed by catalogue rules; expect new variants. A stronger model for the SQL
 agent is the alternative lever.
 
 ## Open items
+
+### Next up
+
+The three items from the 2026-08-18 mentor review, and where they stand after
+the API work:
+
+| | State |
+|---|---|
+| `InMemorySaver` -> `langgraph-checkpoint-postgres` | **Done.** `open_checkpointer()` in `app/graph/checkpointer.py`; verified by surviving a real process restart. `build_checkpointer()` still returns an InMemorySaver and is unchanged, so the evals and Studio are unaffected. |
+| Structured logging | **Half done.** `app/logging_config.py` emits one JSON object per line and `LOG_LEVEL` is finally read — it had been in every `.env` template since the beginning and `extra="ignore"` was swallowing it. Question and answer text are redacted at the formatter, tested. **`stop_reason` is not done.** |
+| CI running pytest + ruff on push | **Not started.** No `.github/` at all. `origin` is a real GitHub repo with `main`/`staging`/`dev`, so it is worth doing. |
+
+**`stop_reason` specifically.** `make_domain_node` still degrades a
+`GraphRecursionError` into a friendly `AIMessage` and logs nothing, so an
+out-of-steps run is indistinguishable from a real answer to anything watching
+— including, now, the API. That was tolerable when a human was reading a CLI
+trace and is not once a front end is attached: the operator has no way to
+tell "the agent ran out of steps" from "the agent answered". The turn should
+carry a reason (`completed` / `out_of_steps` / `refused` / `error`) into the
+log line the chat routes already emit.
+
 
 **Fixed 17 August 2026** (each now has an eval case, so it stays fixed):
 
@@ -573,8 +788,13 @@ precise about which half of each is blocked:
 | Requester identity + RLS | the policies in `002` | the whole agent-side path: `requester_id` → context → `SQLExecutor` → `app.requester_id` |
 
 So the plumbing is finished and the policy is written. What is missing is a
-CRM connection (`CRM_POSTGRES_*` is unset; the host **is** reachable) and an
-authenticated caller to populate `requester_id` — which is the API layer.
+CRM connection (`CRM_POSTGRES_*` is unset; the host **is** reachable).
+
+**The authenticated caller now exists.** As of 18 August 2026 `requester_id`
+is the verified JWT subject, published to PostgreSQL as `app.requester_id` on
+every query. So the only thing still standing between here and applying
+`002_row_level_security.sql` is the CRM connection itself — the identity half
+is done and verified end to end.
 
 **Until `002` is applied, every user of this agent can read every row of
 every table in the catalogue.** That is stated in `guard.py` as well, rather
@@ -614,15 +834,15 @@ that RLS is in force.
   single-process, locks its directory, and ignores payload indexes, so
   filtering is correct but scans. **Point `QDRANT_URL` at a real server before
   this carries traffic.**
-- **No upload endpoint.** `app/api/` is still empty. See the workspace section.
+- ~~No upload endpoint.~~ **Built** — see "The HTTP API".
 - **No retention or deletion policy.** `WorkspaceService.delete()` exists and is
   never called by anything. Uploads accumulate under `settings.workspace_root`
   indefinitely, and they contain customer data. This needs a decision before
   anything real is uploaded.
-- **No per-user check on `workspace_id`.** The tools trust whatever the graph
-  puts in state. That is the right boundary for the tools, but whoever sets
-  `workspace_id` — the API layer, when it exists — must derive it from an
-  authenticated session and never from user input.
+- ~~No per-user check on `workspace_id`.~~ **Closed.** The tools still trust
+  whatever the graph puts in state, which remains the right boundary for
+  them; the API layer now derives `workspace_id` from the verified JWT
+  subject and the request models refuse it as a field. See "The HTTP API".
 - **Text-aligned PDF tables are still prose.** Ruled tables now reach the
   exact lane; a table held together only by whitespace does not, because it
   cannot be distinguished from ordinary text. See the PDF-tables note in the
@@ -642,14 +862,17 @@ that RLS is in force.
   inside PostgreSQL, where the agent's allowlist does not apply.
 - Lookup tables (`lead_stages`, `projects`, `franchises`, `lead_sources`). Ids
   are queryable, names are not.
-- `app/api/`, `app/auth/` — empty placeholders.
+- ~~`app/api/`, `app/auth/` — empty placeholders.~~ **Both built.**
 - **Database role is read-only when configured.** `marq_agent_ro` had no
   grants at all; `migrations/001_read_only_role.sql` fixes that and the pool
   uses it when `POSTGRES_READONLY_USER` is set. Unset, the guard is still the
   only enforcement point — `Database.verify_read_only()` says which.
-- `settings` and `app_db` are built at import. This is why the test suite needs a
-  session-scoped event loop, and it will resurface when the API layer needs a
-  lifespan.
+- `settings` and `app_db` are built at import. This is why the test suite needs
+  a session-scoped event loop. It did resurface when the API layer needed a
+  lifespan: `app_db` already exists by the time the lifespan runs, so the pool
+  is *opened* there rather than constructed there, and closing it exposed the
+  pool-reuse bug described under "The HTTP API". Injecting the database
+  instead of importing a singleton is still the real fix.
 
 **Housekeeping:**
 - Git identity is auto-derived (`ahmedbadr@MacBook-Air-Ahmed.local`), which is

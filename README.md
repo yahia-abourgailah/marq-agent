@@ -62,6 +62,23 @@ app/
     supervisor.py      routing: which specialist owns this question
     builder.py         graph assembly
     state.py           conversation state
+    checkpointer.py    conversation persistence (PostgreSQL, or in-memory)
+  api/
+    app.py             create_app(), the lifespan, CORS, request ids
+    routes/            chat (JSON + SSE), threads, workspace, health
+    streaming.py       graph run -> SSE events, and the token filter
+    deps.py            request-scoped dependencies
+    schemas.py         request/response bodies — identity is never a field
+    errors.py          typed errors; internals never cross the wire
+  auth/
+    jwt.py             bearer token verification
+    principal.py       the authenticated caller; derives workspace + threads
+docs/
+  TESTING.md           testing the API by hand
+  openapi.json         the exported contract, for the frontend team
+  postman/             importable collection + environment
+  logging_config.py    structured JSON logging
+main.py                HTTP entry point
 evals/                 behavioural cases for the SQL Agent
 scripts/               developer utilities, not imported by the app
 tests/
@@ -131,21 +148,115 @@ not automatic is the supervisor prompt, which has to learn the new category
 so the classifier knows when to choose it — add a case to
 `evals/routing_cases.py` at the same time.
 
+## Running the API
+
+The service the website front end talks to. `app/api/` sits between the
+browser and the agent: it authenticates the caller, derives their identity,
+and hands the graph a question.
+
+```bash
+python scripts/dev_token.py init   # once — generates a development keypair
+python main.py                     # 127.0.0.1:8000
+```
+
+Interactive docs at `/docs` once it is up. For production, several workers are
+safe because conversations live in PostgreSQL rather than in process memory:
+
+```bash
+uvicorn main:app --host 0.0.0.0 --workers 4
+```
+
+**Testing it by hand — Postman, curl, known-good answers, and what to do when
+something fails: [docs/TESTING.md](docs/TESTING.md).** A ready-made Postman
+collection lives in `docs/postman/`.
+
+### Endpoints
+
+| | |
+|---|---|
+| `POST /v1/chat` | Ask a question, wait for the whole answer |
+| `POST /v1/chat/stream` | The same turn as Server-Sent Events |
+| `GET /v1/threads` | This caller's conversations |
+| `GET /v1/threads/{id}` | Replay one |
+| `DELETE /v1/threads/{id}` | Forget one, messages and all |
+| `POST /v1/workspace/files` | Upload a spreadsheet or PDF |
+| `GET /v1/workspace/files` | List them |
+| `DELETE /v1/workspace/files/{id}` | Delete one |
+| `GET /health` | Liveness — no I/O, no token |
+| `GET /health/ready` | What is actually reachable |
+
+### Authentication
+
+The front end authenticates its own users and presents a signed JWT:
+
+```
+Authorization: Bearer <token>
+```
+
+The employee id is read from the `sub` claim. **It is never taken from the
+request body** — that id becomes `app.requester_id` in PostgreSQL and decides
+which rows row-level security will return, so it has to be asserted by the
+token issuer rather than by the caller. Sending `workspace_id` or
+`requester_id` in a request body is a 422, not a silently ignored field.
+
+Configure `JWT_PUBLIC_KEY` (or `JWT_PUBLIC_KEY_PATH`), `JWT_ISSUER` and
+`JWT_AUDIENCE`.
+
+There is no token issuer yet, so `scripts/dev_token.py` stands in for one —
+it keeps a development keypair under `var/` and signs tokens the API verifies
+exactly as it will verify the real thing:
+
+```bash
+curl -X POST localhost:8000/v1/chat \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $(python scripts/dev_token.py mint)" \
+  -d '{"message": "How many deals are there in total?"}'
+```
+
+`AUTH_DEV_MODE=true` additionally accepts an unsigned `X-Debug-Subject`
+header. That is a *bypass* — it runs no signature, expiry, issuer or audience
+check — so prefer a real token for anything you intend to trust. It is
+refused outright when `APP_ENV=production`, where the process will not
+start.
+
+### What the caller never chooses
+
+| | Derived from |
+|---|---|
+| `requester_id` | the verified `sub` claim |
+| `workspace_id` | a hash of the subject — one workspace per employee |
+| the checkpointer's thread id | the subject plus the client's thread id |
+
+Two employees can both use a thread called `today` and will never see each
+other's. A thread id belonging to somebody else reads as 404, not 403 — a
+403 would confirm which ids exist.
+
+### Streaming
+
+`POST /v1/chat/stream` emits `start`, `route`, `tool`, `token`, then `final`.
+A client can ignore `token` entirely and read `final`, which carries the whole
+answer — useful for scripts and across reconnects.
+
+The routing decision and everything the SQL Agent generates are filtered out
+before they reach the wire. See `app/api/streaming.py`; the filter is derived
+from a measured run, not assumed.
+
+
 ## Running the tests
 
 Integration tests need a live model endpoint and a live PostgreSQL, so they are
 excluded by default (configured in `pyproject.toml`).
 
 ```bash
-pytest                  # unit tests only — hermetic, no network or database
+pytest                  # 707 hermetic tests — no network or database, ~8s
 ```
 
 ```bash
-pytest -m integration   # the ones that need live infrastructure
+pytest -m integration   # 124 that need live infrastructure
 ```
 
 ```bash
-pytest -m ""            # everything
+pytest -m ""            # everything — 831 tests, 93% coverage
 ```
 
 ## Trying the agent in LangGraph Studio
