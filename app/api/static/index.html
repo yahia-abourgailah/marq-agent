@@ -266,41 +266,80 @@ textarea:focus { outline: none; border-color: var(--gold); background: #fff; }
 .send:disabled { opacity: .4; cursor: not-allowed; }
 .foot { text-align: center; margin-top: 10px; font-size: 10px; color: var(--ink-dim); letter-spacing: .06em; }
 
-/* the work, while it is happening */
+/* ------------------------------------------------------------------
+   While the agent works.
+
+   Says nothing about tools, routes or SQL. That is how the machine works,
+   not what was asked, and a line reading "Querying the CRM · sql_query"
+   turns a conversation into a console. The detail is not discarded — it
+   moves under the finished answer, behind one control, for the moments
+   someone wants to check a number.
+   ------------------------------------------------------------------ */
 .stage {
-  display: flex; align-items: center; gap: 10px; padding: 2px 0 4px;
-  font-size: 11px; letter-spacing: .14em; text-transform: uppercase;
-  color: var(--ink-dim);
+  display: flex; align-items: center; gap: 10px; padding: 2px 0 6px;
+  font-size: 11.5px; letter-spacing: .1em; color: var(--ink-dim);
 }
-.stage .orb {
-  width: 9px; height: 9px; flex: none; position: relative;
-}
+.stage .orb { width: 8px; height: 8px; flex: none; position: relative; }
 .stage .orb::before, .stage .orb::after {
-  content: ""; position: absolute; inset: 0; border-radius: 50%;
-  background: var(--gold);
+  content: ""; position: absolute; inset: 0; border-radius: 50%; background: var(--gold);
 }
-.stage .orb::after { animation: pulse 1.5s ease-out infinite; }
-@keyframes pulse { 0% { transform: scale(1); opacity: .7 } 100% { transform: scale(2.6); opacity: 0 } }
-.stage .elapsed { margin-left: auto; font-variant-numeric: tabular-nums; opacity: .6; letter-spacing: .06em; }
+.stage .orb::after { animation: pulse 1.6s ease-out infinite; }
+@keyframes pulse { 0% { transform: scale(1); opacity: .65 } 100% { transform: scale(2.8); opacity: 0 } }
+.stage .elapsed { margin-left: auto; font-variant-numeric: tabular-nums; opacity: .45; font-size: 10.5px; }
 .stage.gone { display: none; }
 
-/* steps already completed, kept as a quiet trail */
-.trail { font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
-         color: var(--ink-dim); opacity: .55; margin-bottom: 8px; }
-.trail span:not(:last-child)::after { content: " ◇ "; color: var(--gold); opacity: .8; }
-
-/* the cursor that makes typing visible */
 .caret {
   display: inline-block; width: 2px; height: 1.05em; background: var(--gold);
   vertical-align: -0.16em; margin-left: 1px; animation: blink 1.05s steps(2) infinite;
 }
 @keyframes blink { 0%,50% { opacity: 1 } 50.1%,100% { opacity: 0 } }
 
-.spin { display: inline-block; animation: sp 1.1s linear infinite; color: var(--gold); }
-@keyframes sp { to { transform: rotate(360deg); } }
-.typing { display: inline-block; width: 7px; height: 15px; background: var(--gold);
-          vertical-align: text-bottom; animation: bl 1s steps(2) infinite; }
-@keyframes bl { 0%,50% { opacity: 1 } 50.1%,100% { opacity: 0 } }
+/* ---- everything technical, after the fact ---- */
+.after { display: flex; align-items: center; gap: 16px; margin-top: 12px;
+         opacity: 0; animation: rise .3s ease forwards; }
+@keyframes rise { to { opacity: 1 } }
+.after button {
+  background: none; border: none; padding: 0; cursor: pointer;
+  font-size: 10px; letter-spacing: .16em; text-transform: uppercase;
+  color: var(--ink-dim); display: flex; align-items: center; gap: 6px;
+  transition: color .16s ease; font-family: var(--body);
+}
+.after button:hover { color: var(--burgundy); }
+.after .gem { color: var(--gold); font-size: 9px; transition: transform .22s ease; }
+.after button.open .gem { transform: rotate(90deg); }
+
+.details { margin-top: 12px; border-left: 2px solid var(--gold-soft);
+           padding-left: 16px; display: none; }
+.details.open { display: block; animation: rise .26s ease forwards; }
+.details .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+.details .cap { font-size: 9.5px; letter-spacing: .18em; text-transform: uppercase;
+                color: var(--ink-dim); margin-right: 4px; }
+.pill { font-size: 9.5px; letter-spacing: .12em; text-transform: uppercase;
+        padding: 3px 10px; border: 1px solid var(--rule); color: var(--ink-dim);
+        border-radius: 20px; background: #fff; }
+.pill.who { color: var(--burgundy); border-color: rgba(91,15,26,.25); }
+.pill.tool { color: #8a6d3f; border-color: var(--gold-soft); background: var(--gold-faint); }
+
+.q { margin-bottom: 14px; }
+.q .qh { font-size: 9.5px; letter-spacing: .18em; text-transform: uppercase;
+         color: var(--ink-dim); margin-bottom: 6px; }
+.q pre { margin: 0; padding: 13px 15px; background: var(--black); color: #d9d4c9;
+         overflow-x: auto; border-radius: 2px;
+         font: 11.5px/1.7 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.q pre .kw { color: var(--gold); }
+.q .meta { margin-top: 5px; font-size: 10.5px; color: var(--ink-dim); letter-spacing: .04em; }
+.q .meta.warn { color: var(--burgundy); }
+.q .declined { padding: 10px 14px; background: #fbfaf8; border: 1px solid var(--rule);
+               font-size: 12.5px; color: var(--ink-dim); }
+
+.toast { position: fixed; bottom: 26px; left: 50%;
+         transform: translateX(-50%) translateY(12px);
+         background: var(--black); color: var(--ivory); padding: 12px 20px;
+         font-size: 12.5px; border-radius: 2px; z-index: 50; opacity: 0;
+         transition: all .28s ease; max-width: 520px; pointer-events: none;
+         border-left: 2px solid var(--gold); }
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.toast.bad { border-left-color: var(--burgundy); }
 
 @media (max-width: 860px) { body { grid-template-columns: 1fr; } aside { display: none; } .log, .composer, header.bar { padding-left: 20px; padding-right: 20px; } }
 </style>
@@ -422,19 +461,120 @@ function bubble(role, text) {
 }
 const scrollDown = () => { $("log").scrollTop = $("log").scrollHeight; };
 
-function setPills(el, route, tools) {
-  const who = el.querySelector(".who");
-  who.querySelectorAll(".pill").forEach(p => p.remove());
-  if (route) {
-    const s = document.createElement("span");
-    s.className = "pill route"; s.textContent = route;
-    who.appendChild(s);
+/* ------------------------------------------------------------------
+   Everything technical, revealed only after the answer settles.
+
+   Nothing about tools, routes or SQL appears while the answer streams. It
+   is how the machine works, not what was asked, and a conversation that
+   narrates its own plumbing reads as a console rather than an assistant.
+
+   It is not discarded though: the provenance feature exists so a number can
+   be checked rather than trusted, and that only works if the query stays
+   reachable. So it moves here — one quiet control under the finished
+   answer, closed by default.
+   ------------------------------------------------------------------ */
+const SPECIALIST_NAMES = {
+  deals: "Deals", leads: "Leads", workspace: "Your files",
+  research: "Web research", general: "General",
+};
+const labelFor = (r) => SPECIALIST_NAMES[r] || r;
+
+function pill(text, cls) {
+  const s = document.createElement("span");
+  s.className = "pill " + cls;
+  s.textContent = text;
+  return s;
+}
+
+function attachDetails(el, { specialists, tools, provenance, answer }) {
+  const bar = document.createElement("div");
+  bar.className = "after";
+
+  const copy = document.createElement("button");
+  const setCopy = (t) => (copy.innerHTML = `<span class="gem">◇</span> ${t}`);
+  setCopy("Copy");
+  copy.onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(answer || "");
+      setCopy("Copied");
+      setTimeout(() => setCopy("Copy"), 1600);
+    } catch { toast("Could not copy to the clipboard", true); }
+  };
+  bar.appendChild(copy);
+
+  const rows = [];
+  if (specialists && specialists.length) rows.push(["Answered by", specialists.map(labelFor), "who"]);
+  if (tools && tools.length) rows.push(["Steps", tools.map(t => t.replace(/_/g, " ")), "tool"]);
+
+  let panel = null;
+
+  if (rows.length || (provenance && provenance.length)) {
+    panel = document.createElement("div");
+    panel.className = "details";
+
+    rows.forEach(([cap, items, cls]) => {
+      const row = document.createElement("div");
+      row.className = "row";
+      const c = document.createElement("span");
+      c.className = "cap"; c.textContent = cap;
+      row.appendChild(c);
+      items.forEach(t => row.appendChild(pill(t, cls)));
+      panel.appendChild(row);
+    });
+
+    (provenance || []).forEach((rec, i) => {
+      const q = document.createElement("div");
+      q.className = "q";
+      const head = document.createElement("div");
+      head.className = "qh";
+      head.textContent = rec.sql
+        ? (provenance.length > 1 ? `Query ${i + 1}` : "The query")
+        : "No query ran";
+      q.appendChild(head);
+
+      if (rec.sql) {
+        const pre = document.createElement("pre");
+        pre.innerHTML = sqlHtml(rec.sql);
+        q.appendChild(pre);
+        const m = document.createElement("div");
+        m.className = "meta" + (rec.truncated ? " warn" : "");
+        m.textContent = (rec.rows_available ?? "?") + " row(s) matched"
+          + (rec.truncated ? " · truncated — a total from this would be wrong" : "");
+        q.appendChild(m);
+      } else if (rec.refused) {
+        const d = document.createElement("div");
+        d.className = "declined"; d.textContent = rec.refused;
+        q.appendChild(d);
+      }
+      panel.appendChild(q);
+    });
+
+    const toggle = document.createElement("button");
+    const setToggle = () => (toggle.innerHTML = '<span class="gem">▸</span> Details');
+    setToggle();
+    toggle.onclick = () => {
+      const open = panel.classList.toggle("open");
+      toggle.classList.toggle("open", open);
+      if (open) scrollDown();
+    };
+    bar.appendChild(toggle);
   }
-  (tools || []).forEach(t => {
-    const s = document.createElement("span");
-    s.className = "pill tool"; s.textContent = t;
-    who.appendChild(s);
-  });
+
+  el.appendChild(bar);
+  if (panel) el.appendChild(panel);
+  scrollDown();
+}
+
+function toast(text, bad = false) {
+  const t = document.createElement("div");
+  t.className = "toast" + (bad ? " bad" : "");
+  t.textContent = text;
+  document.body.appendChild(t);
+  requestAnimationFrame(() => t.classList.add("show"));
+  setTimeout(() => {
+    t.classList.remove("show");
+    setTimeout(() => t.remove(), 400);
+  }, 4200);
 }
 
 /* ------------------------------------------------------------------
@@ -457,14 +597,32 @@ class Typer {
   constructor(el) {
     this.el = el; this.queue = ""; this.shown = "";
     this.ended = false; this.last = null; this.raf = null; this.onDone = null;
+    Typer.active = this;
   }
   push(text) { this.queue += text; this.kick(); }
   end(cb) { this.ended = true; this.onDone = cb; this.kick(); }
-  flush() {                       // used on error, or when the user moves on
+  flush() {                       // error, or the user moved on
     this.shown += this.queue; this.queue = "";
     this.paint(false); this.settle();
   }
-  kick() { if (this.raf === null) this.raf = requestAnimationFrame(t => this.tick(t)); }
+  kick() {
+    if (this.raf !== null) return;
+
+    // [claude] requestAnimationFrame does not fire in a hidden tab.
+    //
+    // Found the hard way: with the tab backgrounded the typer stalled
+    // completely — no text, and because `settle()` runs from inside a
+    // frame, the completion callback never fired either, so the finished
+    // answer and its details were never rendered at all. Someone who
+    // switched tabs mid-answer came back to an empty bubble and a timer
+    // still counting.
+    //
+    // Nobody is watching a hidden tab animate, so there is nothing to pace:
+    // paint the lot and settle.
+    if (document.hidden) { this.flush(); return; }
+
+    this.raf = requestAnimationFrame(t => this.tick(t));
+  }
   tick(now) {
     this.raf = null;
     const dt = this.last === null ? 1 / 60 : Math.min((now - this.last) / 1000, 0.25);
@@ -485,33 +643,21 @@ class Typer {
     if (caret) this.el.appendChild(document.createElement("span")).className = "caret";
     scrollDown();
   }
-  settle() { const cb = this.onDone; this.onDone = null; if (cb) cb(this.shown); }
+  settle() {
+    if (Typer.active === this) Typer.active = null;
+    const cb = this.onDone; this.onDone = null;
+    if (cb) cb(this.shown);
+  }
 }
 
-/* What each tool is doing, in words a person would use. */
-const STAGE_NAMES = {
-  web_search: "Searching the web",
-  sql_query: "Querying the CRM",
-  workspace_files: "Looking at your files",
-  workspace_read_rows: "Reading the rows",
-  workspace_aggregate: "Totalling your file",
-  workspace_search: "Searching your documents",
-  compare_with_crm: "Reconciling against the CRM",
-  calculate_percentage: "Working out the percentage",
-  calculate_share: "Working out the share",
-  calculate_funnel: "Building the funnel",
-  compare_periods: "Comparing the periods",
-};
-const stageName = (t) => STAGE_NAMES[t] || t.replace(/_/g, " ");
+// The typer for the turn in flight, so hiding the tab can finish it.
+Typer.active = null;
 
-const SPECIALIST_NAMES = {
-  deals: "Deals",
-  leads: "Leads",
-  workspace: "Your files",
-  research: "Web research",
-  general: "General",
-};
-const labelFor = (r) => SPECIALIST_NAMES[r] || r;
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden && Typer.active) Typer.active.flush();
+});
+
+
 
 /* The agent writes light markdown — bold, bullets, the occasional heading.
    Rendering it here rather than showing raw asterisks. Deliberately tiny and
@@ -554,35 +700,6 @@ function sqlHtml(sql) {
   return esc.replace(KEYWORDS, m => `<span class="kw">${m}</span>`);
 }
 
-function addProvenance(el, records) {
-  if (!records || !records.length) return;
-  records.forEach((p, i) => {
-    const d = document.createElement("details");
-    d.className = "prov";
-    const n = records.length > 1 ? ` ${i + 1}` : "";
-    const head = p.sql ? `The query${n}` : `Declined${n}`;
-    d.innerHTML = `<summary><span class="caret">▸</span>${head}</summary>`;
-
-    if (p.sql) {
-      const pre = document.createElement("pre");
-      pre.innerHTML = sqlHtml(p.sql);
-      d.appendChild(pre);
-      const m = document.createElement("div");
-      m.className = "prov-meta" + (p.truncated ? " warn" : "");
-      m.textContent = (p.rows_available ?? "?") + " row(s) matched"
-        + (p.truncated ? " · truncated — a total from this would be wrong" : "");
-      d.appendChild(m);
-    } else if (p.refused) {
-      const m = document.createElement("div");
-      m.className = "prov-meta";
-      m.textContent = p.refused;
-      d.appendChild(m);
-    }
-    el.appendChild(d);
-  });
-  scrollDown();
-}
-
 /* ---------------- a turn, streamed ---------------- */
 async function send(preset) {
   const text = (preset ?? $("input").value).trim();
@@ -596,15 +713,15 @@ async function send(preset) {
   const el = bubble("agent", "");
   const body = el.querySelector(".bubble");
 
-  // A trail of completed steps, and a live line for the one in progress.
-  const trail = document.createElement("div");
-  trail.className = "trail";
+  // [claude] One calm line. No tool names, no route names, no jargon —
+  // that is how the machine works rather than what was asked. It exists
+  // only so the couple of seconds before text appears do not read as a
+  // hang; everything technical waits for `attachDetails` afterwards.
   const stage = document.createElement("div");
   stage.className = "stage";
-  stage.innerHTML = `<span class="orb"></span>
-                     <span class="stage-text">Reading your question</span>
-                     <span class="elapsed">0.0s</span>`;
-  el.insertBefore(trail, body);
+  stage.innerHTML = '<span class="orb"></span>'
+                  + '<span class="stage-text">Thinking</span>'
+                  + '<span class="elapsed">0.0s</span>';
   el.insertBefore(stage, body);
 
   const t0 = performance.now();
@@ -613,24 +730,10 @@ async function send(preset) {
       ((performance.now() - t0) / 1000).toFixed(1) + "s";
   }, 100);
   const setStage = (t) => { stage.querySelector(".stage-text").textContent = t; };
-  // [claude] Consecutive repeats collapse to "×2". Two percentage
-  // calculations in a row is one fact about the turn, not two steps, and
-  // spelling it out twice reads as a stutter.
-  const addTrail = (t) => {
-    const last = trail.lastElementChild;
-    if (last && last.dataset.step === t) {
-      last.dataset.count = String(Number(last.dataset.count || 1) + 1);
-      last.textContent = t + " ×" + last.dataset.count;
-      return;
-    }
-    const s = document.createElement("span");
-    s.dataset.step = t; s.textContent = t;
-    trail.appendChild(s);
-  };
   const endStage = () => { clearInterval(ticking); stage.classList.add("gone"); };
 
   const typer = new Typer(body);
-  let route = null, tools = [], started = false, done = null;
+  let route = null, plan = [], tools = [], started = false, finished = null;
 
   try {
     const res = await fetch("/v1/chat/stream", {
@@ -651,8 +754,8 @@ async function send(preset) {
     let buf = "", event = null;
 
     while (true) {
-      const { value, done: fin } = await reader.read();
-      if (fin) break;
+      const { value, done } = await reader.read();
+      if (done) break;
       buf += dec.decode(value, { stream: true });
       const lines = buf.split("\n");
       buf = lines.pop();
@@ -662,49 +765,32 @@ async function send(preset) {
         if (!line.startsWith("data:")) continue;
         let d; try { d = JSON.parse(line.slice(5).trim()); } catch { continue; }
 
-        if (event === "start") { threadId = d.thread_id; setStage("Routing your question"); }
-
-        else if (event === "plan") {
-          // [claude] Worth showing before anything else happens: a
-          // two-specialist turn takes noticeably longer, and a UI that says
-          // why reads as working rather than hung.
-          const names = (d.specialists || []).map(labelFor);
-          if (names.length > 1) {
-            addTrail(names.join(" + "));
-            setStage("Working on both halves");
-          }
-        }
-
-        else if (event === "route") {
-          route = d.route; setPills(el, route, tools);
-          addTrail("Sent to " + labelFor(route));
-          setStage("Deciding what to look up");
-        }
-
-        else if (event === "tool") {
-          tools.push(d.name); setPills(el, route, tools);
-          if (tools.length > 1) addTrail(stageName(tools[tools.length - 2]));
-          setStage(stageName(d.name));
-        }
+        // route, plan and tool are recorded for the details panel and
+        // deliberately change nothing on screen while the turn runs.
+        if (event === "start") threadId = d.thread_id;
+        else if (event === "plan") plan = d.specialists || [];
+        else if (event === "route") route = d.route;
+        else if (event === "tool") tools.push(d.name);
 
         else if (event === "token") {
-          if (!started) {
-            started = true;
-            if (tools.length) addTrail(stageName(tools[tools.length - 1]));
-            setStage("Writing the answer");
-          }
+          if (!started) { started = true; setStage("Writing"); }
           typer.push(d.text);
         }
 
         else if (event === "final") {
-          done = d;
-          // Let the typer finish what it is showing, THEN swap in the
-          // formatted answer — reflowing markdown mid-type is jarring.
+          finished = d;
           typer.end(() => {
             endStage();
-            body.innerHTML = renderMarkdown(d.answer || typer.shown || "(no answer)");
-            setPills(el, d.route || route, d.tools_used || tools);
-            addProvenance(el, d.provenance);
+            const answer = d.answer || typer.shown || "(no answer)";
+            body.innerHTML = renderMarkdown(answer);
+            attachDetails(el, {
+              specialists: (d.specialists && d.specialists.length)
+                ? d.specialists
+                : (plan.length ? plan : (d.route || route ? [d.route || route] : [])),
+              tools: d.tools_used && d.tools_used.length ? d.tools_used : tools,
+              provenance: d.provenance,
+              answer,
+            });
             loadThreads();
           });
         }
@@ -717,8 +803,7 @@ async function send(preset) {
       }
     }
 
-    // The stream closed without a final event — show whatever arrived.
-    if (!done) { typer.end(() => endStage()); }
+    if (!finished) typer.end(() => endStage());
 
   } catch (e) {
     typer.flush(); endStage();
@@ -728,6 +813,7 @@ async function send(preset) {
     busy = false; $("send").disabled = false; $("input").focus();
   }
 }
+
 function flashToken() {
   const t = $("token");
   t.style.borderColor = "#CBA46E";
@@ -769,7 +855,12 @@ async function openThread(id) {
     const el = bubble(m.role === "user" ? "user" : "agent", m.content);
     // [claude] The SQL is stored per turn now, so a reopened conversation
     // is as checkable as a live one.
-    if (m.role !== "user") addProvenance(el, m.provenance);
+    if (m.role !== "user") {
+      attachDetails(el, {
+        specialists: [], tools: [],
+        provenance: m.provenance, answer: m.content,
+      });
+    }
   });
   loadThreads();
 }
@@ -838,10 +929,10 @@ async function upload(file) {
   try {
     const r = await fetch("/v1/workspace/files", { method: "POST", headers: auth(), body: fd });
     const d = await r.json();
-    if (!r.ok) alert(d.error?.message || "Upload failed");
-    else if (d.warnings?.length) alert(d.warnings.join("\n"));
+    if (!r.ok) toast(d.error?.message || "Upload failed", true);
+    else toast(d.warnings?.length ? d.warnings.join(" · ") : "File uploaded.");
   } catch (e) {
-    alert("Upload failed: " + e.message);
+    toast("Upload failed: " + e.message, true);
   } finally {
     drop.innerHTML = original; loadFiles();
   }
