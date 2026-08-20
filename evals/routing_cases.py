@@ -177,13 +177,25 @@ ROUTE_CASES: tuple[RouteCase, ...] = (
         ),
     ),
     # ---- genuinely out of scope --------------------------------------
-    RouteCase("What is the weather in Cairo today?", "general"),
+    # [claude] Was `general`, back when general meant "cannot help". The
+    # weather is a fact about the outside world and the Research Agent can
+    # now look it up, so `research` is the better answer — the eval was
+    # stale, not the router.
+    RouteCase("What is the weather in Cairo today?", "research"),
     # [claude] The two turns people actually open a chat window with. Both
     # used to reach a canned refusal, which reads as broken rather than
     # scoped — the reason `out_of_scope` became a real agent.
     RouteCase("hi", "general"),
     RouteCase("What can you help me with?", "general"),
+    # Needs no facts, so it must NOT burn a web search.
     RouteCase("Write me a poem about real estate.", "general"),
+
+    # ---- the research boundary -------------------------------------
+    RouteCase("What is the outlook for the Egyptian property market?", "research"),
+    RouteCase("Is the new administrative capital still growing?", "research"),
+    # MarQ's own numbers are never a research question — that data is
+    # private and must not reach a search provider.
+    RouteCase("How is our own pipeline performing this quarter?", "deals"),
     # ---- follow-ups keep the thread ----------------------------------
     RouteCase(
         "And how many of those are commercial?",

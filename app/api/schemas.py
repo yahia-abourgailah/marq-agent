@@ -115,6 +115,16 @@ class ChatResponse(BaseModel):
 
     tools_used: list[str] = Field(default_factory=list)
 
+    specialists: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Every specialist that worked on this turn. Usually one; two "
+            "when the question had two halves — 'how do our cancellations "
+            "compare with the market' is a deals question and a research "
+            "question, and the answer merges both."
+        ),
+    )
+
     provenance: list[QueryProvenance] = Field(
         default_factory=list,
         description=(

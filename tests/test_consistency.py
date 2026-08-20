@@ -23,7 +23,7 @@ import pytest
 
 import app
 from app.graph.agents.domain import DOMAINS, Domain
-from app.graph.supervisor import OUT_OF_SCOPE, VALID_ROUTES
+from app.graph.supervisor import VALID_ROUTES
 from app.sql.catalogue import get_catalogue
 from app.sql.guard import SQLGuard, SQLGuardError
 
@@ -180,9 +180,20 @@ def test_every_domain_has_a_route_and_every_route_has_a_domain():
     """
     A route with no node falls through to the fallback and answers as the
     wrong specialist. A domain with no route is simply unreachable.
+
+    [claude] `general` and `research` are excluded because they are not
+    Domains and must not become ones. A `Domain` binds a table set to a
+    guard, and both of these hold no CRM tables at all — general answers
+    greetings, research reads the public web. Giving either a Domain would
+    hand it a `sql_query` tool, and they are the two agents most exposed to
+    being talked into something: one takes arbitrary user chat, the other
+    reads pages written by strangers. They are the agents that hold no keys.
     """
 
-    routes = set(VALID_ROUTES) - {OUT_OF_SCOPE}
+    from app.graph.supervisor import GENERAL_ROUTE, RESEARCH_ROUTE
+
+    toolless = {GENERAL_ROUTE, RESEARCH_ROUTE}
+    routes = set(VALID_ROUTES) - toolless
 
     assert routes == set(DOMAINS)
 

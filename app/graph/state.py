@@ -4,7 +4,8 @@ Conversation state shared across graph nodes.
 
 from __future__ import annotations
 
-from typing import Annotated, NotRequired
+import operator
+from typing import Annotated, Any, NotRequired
 
 from langchain_core.messages import AnyMessage
 from langgraph.graph.message import add_messages
@@ -48,6 +49,30 @@ class AgentState(TypedDict):
     # the difference and refuse, where an empty string would silently match
     # nothing and look like it was working.
     requester_id: NotRequired[str]
+
+    # [claude] Which specialists this turn needs, chosen by the supervisor.
+    #
+    # `route` above holds the primary one and stays exactly as it was, so
+    # every existing caller, eval and trace keeps working. This is the whole
+    # list, because a question can legitimately need two — "how do our
+    # cancellations compare with the market" is a deals question and a
+    # research question, and answering only half of it looks like a complete
+    # answer.
+    plan: NotRequired[list[str]]
+
+    # [claude] What each specialist came back with, before they are merged.
+    #
+    # Needs a reducer because the specialists run **in parallel**. Without
+    # one, LangGraph raises `InvalidUpdateError` on two nodes writing the
+    # same channel in a single step — and with a last-write-wins field you
+    # would instead get one specialist's answer silently discarded, which is
+    # the same shape as every other bug this project has found: a complete
+    # looking answer that quietly dropped half the question.
+    #
+    # `operator.add` on lists concatenates, so order follows completion
+    # rather than the plan. The synthesis step sorts by domain name so the
+    # merged answer does not reorder itself run to run.
+    findings: Annotated[list[dict[str, Any]], operator.add]
 
 
 __all__ = ["AgentState"]

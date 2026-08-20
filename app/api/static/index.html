@@ -490,6 +490,7 @@ class Typer {
 
 /* What each tool is doing, in words a person would use. */
 const STAGE_NAMES = {
+  web_search: "Searching the web",
   sql_query: "Querying the CRM",
   workspace_files: "Looking at your files",
   workspace_read_rows: "Reading the rows",
@@ -502,6 +503,15 @@ const STAGE_NAMES = {
   compare_periods: "Comparing the periods",
 };
 const stageName = (t) => STAGE_NAMES[t] || t.replace(/_/g, " ");
+
+const SPECIALIST_NAMES = {
+  deals: "Deals",
+  leads: "Leads",
+  workspace: "Your files",
+  research: "Web research",
+  general: "General",
+};
+const labelFor = (r) => SPECIALIST_NAMES[r] || r;
 
 /* The agent writes light markdown — bold, bullets, the occasional heading.
    Rendering it here rather than showing raw asterisks. Deliberately tiny and
@@ -654,9 +664,20 @@ async function send(preset) {
 
         if (event === "start") { threadId = d.thread_id; setStage("Routing your question"); }
 
+        else if (event === "plan") {
+          // [claude] Worth showing before anything else happens: a
+          // two-specialist turn takes noticeably longer, and a UI that says
+          // why reads as working rather than hung.
+          const names = (d.specialists || []).map(labelFor);
+          if (names.length > 1) {
+            addTrail(names.join(" + "));
+            setStage("Working on both halves");
+          }
+        }
+
         else if (event === "route") {
           route = d.route; setPills(el, route, tools);
-          addTrail(route === "out_of_scope" ? "Outside the CRM" : "Sent to " + route);
+          addTrail("Sent to " + labelFor(route));
           setStage("Deciding what to look up");
         }
 

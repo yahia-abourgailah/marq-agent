@@ -53,6 +53,7 @@ WORKSPACE_ROUTE = "workspace"
 # questions — so the name says that. A route called out_of_scope that
 # answers helpfully is a name that lies, and this codebase keeps getting
 # bitten by those.
+RESEARCH_ROUTE = "research"
 GENERAL_ROUTE = "general"
 
 # Kept as an alias so nothing importing the old name breaks silently.
@@ -62,7 +63,13 @@ OUT_OF_SCOPE = GENERAL_ROUTE
 # parse_route() matches in order and the workspace agent is the only one that
 # can see both an uploaded file and the CRM. A question naming both must not
 # be claimed by whichever route happens to be checked first.
-VALID_ROUTES = (WORKSPACE_ROUTE, DEALS_ROUTE, LEADS_ROUTE, GENERAL_ROUTE)
+VALID_ROUTES = (
+    WORKSPACE_ROUTE,
+    DEALS_ROUTE,
+    LEADS_ROUTE,
+    RESEARCH_ROUTE,
+    GENERAL_ROUTE,
+)
 
 # DEALS is the superset domain, so it is the safe landing place when the
 # classifier returns something unparseable.
@@ -98,6 +105,16 @@ Reply with exactly one word and nothing else:
                  Also choose workspace for anything comparing, reconciling,
                  checking or matching an uploaded file against the CRM.
                  Only the workspace specialist can see both.
+
+  research       The question needs information from outside the company —
+                 market conditions, news, regulations, a developer's public
+                 reputation, prices or trends in the wider market, general
+                 facts. Anything the CRM cannot know because it is not
+                 about MarQ's own records.
+
+                 NEVER choose research for MarQ's own deals, leads, clients
+                 or performance. That data is private and is not sent
+                 outside the company.
 
   general        The turn has no CRM subject at all — a greeting ("hi",
                  "good morning", "thanks"), a question about what you can
@@ -156,7 +173,36 @@ An uploaded file the user believes exists is never general either. If
 they refer to a file, route to workspace; that specialist reports when there
 is nothing uploaded.
 
-Reply with one word: deals, leads, workspace, or general."""
+COMBINING SPECIALISTS
+---------------------
+Most turns need exactly one specialist. Some genuinely need two, and
+answering only half of one of those looks like a complete answer, which is
+worse than saying you cannot.
+
+Reply with more than one name, separated by a comma, ONLY when the question
+plainly has two halves that different specialists own:
+
+  "How do our cancellation rates compare with the market?"
+      -> deals, research
+      (ours is in the CRM; the market is not)
+
+  "Summarise our pipeline and any news about the new capital"
+      -> deals, research
+
+  "Does my sheet match the CRM, and is that developer reputable?"
+      -> workspace, research
+
+Do NOT combine when one specialist already covers the question:
+
+  "Which lead sources produce the most contracted deals"  -> deals
+      (deals sees leads too — one specialist, not two)
+  "How many deals are contracted"                         -> deals
+  "hi"                                                    -> general
+
+Never combine `general` with anything: it is for turns with no subject.
+
+Reply with one word — deals, leads, workspace, research, or general — or
+two names separated by a comma when the question truly has two halves."""
 
 
 # [claude] No longer the general reply — the General Agent writes its own.
@@ -270,6 +316,64 @@ def _conversation(messages: list[AnyMessage], limit: int = 6) -> list[dict]:
     return kept
 
 
+def parse_plan(text: str) -> list[str]:
+    """
+    Map classifier output onto one or more routes.
+
+    [claude] A reply is only a plan when **every** comma-separated part is a
+    bare route name. Anything else goes to `parse_route` whole.
+
+    The first version simply split on commas, and prose full of commas is
+    the common case rather than the exotic one: "This is about leads, not
+    deals." became ["leads", "deals"] — fanning out to two specialists on a
+    *negation*, and answering with the very domain the classifier had just
+    rejected. That is the same shape as the order-dependent substring bug
+    `parse_route` was rewritten to fix, reintroduced one layer up.
+
+    Requiring every part to be a bare token is what separates "deals,
+    research" from prose, and it fails safe: an unrecognised reply keeps the
+    single-route behaviour, including the negation handling and the fallback
+    to deals.
+    """
+
+    raw = str(text).strip()
+
+    if "," not in raw:
+        return [parse_route(raw)]
+
+    # [claude] A leading label is common and harmless — "Route: deals,
+    # research" is a plan wearing a hat. Stripped before splitting so the
+    # strictness below does not reject it as prose.
+    lowered = raw.lower()
+
+    for label in ("route:", "routes:", "plan:", "answer:", "specialists:"):
+        if lowered.startswith(label):
+            lowered = lowered[len(label) :]
+            break
+
+    parts = [part.strip().strip(_TRIM) for part in lowered.split(",")]
+    parts = [part for part in parts if part]
+
+    # Prose, not a plan — hand the whole reply to the single-route reader.
+    if not parts or not all(part in VALID_ROUTES for part in parts):
+        return [parse_route(raw)]
+
+    seen: list[str] = []
+
+    for part in parts:
+        if part not in seen:
+            seen.append(part)
+
+    # `general` is for turns with no subject, so it cannot sensibly be
+    # combined; if a specialist was also named, that is the real answer.
+    if len(seen) > 1 and GENERAL_ROUTE in seen:
+        seen = [route for route in seen if route != GENERAL_ROUTE]
+
+    # Two specialists is the most a question has genuinely needed, and each
+    # one costs a full agent run. Capped rather than trusted.
+    return seen[:2]
+
+
 async def choose_route(model: Any, messages: list[AnyMessage]) -> str:
     """Classify the current turn into one of VALID_ROUTES."""
 
@@ -286,6 +390,29 @@ async def choose_route(model: Any, messages: list[AnyMessage]) -> str:
     return parse_route(response.content)
 
 
+async def choose_plan(model: Any, messages: list[AnyMessage]) -> list[str]:
+    """
+    Classify the turn into one or more routes.
+
+    [claude] The same call `choose_route` makes — same prompt, same message
+    trimming — read with `parse_plan` instead of `parse_route`, so a
+    comma-separated reply becomes a plan and everything else behaves
+    exactly as it did.
+    """
+
+    if not messages:
+        return [FALLBACK_ROUTE]
+
+    response = await model.ainvoke(
+        [
+            {"role": "system", "content": SUPERVISOR_PROMPT},
+            *_conversation(messages),
+        ]
+    )
+
+    return parse_plan(response.content)
+
+
 def out_of_scope_message() -> AIMessage:
     return AIMessage(content=OUT_OF_SCOPE_REPLY)
 
@@ -300,7 +427,10 @@ __all__ = [
     "SUPERVISOR_PROMPT",
     "VALID_ROUTES",
     "WORKSPACE_ROUTE",  # [claude]
+    "RESEARCH_ROUTE",  # [claude]
     "choose_route",
+    "choose_plan",  # [claude]
+    "parse_plan",  # [claude]
     "out_of_scope_message",
     "parse_route",
 ]

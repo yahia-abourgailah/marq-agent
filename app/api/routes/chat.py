@@ -103,6 +103,7 @@ async def chat(
         thread_id=thread_id,
         answer=answer_of(messages),
         route=result.get("route"),
+        specialists=list(result.get("plan") or []),
         tools_used=tools_used_in(messages),
         provenance=records,
     )

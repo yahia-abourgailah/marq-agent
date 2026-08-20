@@ -206,6 +206,19 @@ class Settings(BaseSettings):
     auth_dev_mode: bool = False
 
     # ----------------------------------------------------------
+    # Web search
+    # ----------------------------------------------------------
+    #
+    # [claude] Optional. Unset means the Research Agent reports that it
+    # cannot look things up, rather than failing — the same shape as an
+    # unreachable Qdrant costing search and nothing else.
+    #
+    # A query sent here leaves your infrastructure. Only the Research Agent
+    # holds the tool, and it has no CRM access, so nothing derived from the
+    # database can reach a third party through it.
+    tavily_api_key: str | None = None
+
+    # ----------------------------------------------------------
     # Local UI
     # ----------------------------------------------------------
     #

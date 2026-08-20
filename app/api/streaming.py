@@ -191,6 +191,7 @@ async def stream_turn(
     route: str | None = None
     tools: list[str] = []
     parts: list[str] = []
+    plan: list[str] = []
 
     # [claude] Collects the SQL each tool call runs, out of band — the
     # queries never enter the model's context. See app/sql/provenance.py.
@@ -231,7 +232,20 @@ async def stream_turn(
                         yield sse("token", {"text": text})
 
                 elif kind == "on_chain_end" and node == SUPERVISOR_NODE:
-                    decided = route_from(event.get("data", {}).get("output"))
+                    output = event.get("data", {}).get("output")
+
+                    # [claude] The plan arrives with the route and is worth
+                    # showing: a two-specialist turn takes noticeably longer,
+                    # and a UI that says why is better than one that appears
+                    # to hang.
+                    if isinstance(output, dict) and output.get("plan"):
+                        planned = [str(p) for p in output["plan"]]
+
+                        if planned != plan:
+                            plan = planned
+                            yield sse("plan", {"specialists": plan})
+
+                    decided = route_from(output)
 
                     if decided and decided != route:
                         route = decided
@@ -265,6 +279,7 @@ async def stream_turn(
                 "thread_id": thread_id,
                 "answer": "".join(parts).strip(),
                 "route": route,
+                "specialists": plan,
                 "tools_used": tools,
                 "provenance": provenance_of(collector),
             },

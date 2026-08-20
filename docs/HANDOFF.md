@@ -79,9 +79,25 @@ tools, and compares the two sides in Python.
    can join both. Unparseable routing falls back to `deals` for the same reason.
    The leads guard rejects `deals` even via JOIN or EXISTS.
 
-3. **Routing, not handoff tools.** Agents are sealed by their guards, so a
-   misrouted question cannot be rescued mid-answer. One classification call up
-   front, written to `AgentState.route`, visible in the trace.
+3. **Orchestration, still not handoff tools.** (Revised 19 August 2026 —
+   was "routing, not handoff tools".) One planning call up front chooses
+   **one or two** specialists, written to `AgentState.plan` with the primary
+   still in `route`. They run in parallel and `synthesise` merges them.
+
+   The part worth keeping was never the single agent — it was that agents
+   are **sealed**. Orchestration decides who runs, never what they can
+   reach: every specialist keeps its own guard and table set, so a
+   misrouted question still cannot be rescued by an agent reaching into
+   another domain's data.
+
+   What changed is that a question with two halves gets both answered.
+   "How do our cancellation rates compare with the market" is a deals
+   question and a research question; routing it to either alone returns
+   something that looks complete and silently drops half the question.
+
+   One specialist passes through `synthesise` verbatim — no second model
+   call, and no paraphrasing of a figure that was verified against SQL. The
+   common case costs exactly what it did before.
 
 4. **The catalogue is the single source** for both the model's schema view and
    the guard's allowlist, so they cannot drift.
@@ -717,6 +733,55 @@ entirely — 280 leads have a deal, 78 have a conversion date, 30 have both.
 `scripts/generate_fixture.py` sets `converted_at` at random instead of
 deriving it, so conversion questions have two defensible answers here. Worth
 fixing in the generator before anyone benchmarks against them.
+
+## General and research: the agents that hold no keys
+
+Added 19 August 2026.
+
+`general` answers greetings, "what can you do", and chit-chat. It replaced a
+canned refusal, which meant the two things people actually open a chat window
+with both got "I can only help with MarQ CRM data" — that reads as broken
+rather than scoped, and it was the first thing anyone hit in the new UI.
+
+`research` searches the public web through Tavily — market conditions, news,
+regulation, a developer's public reputation.
+
+**Neither is a `Domain`, and neither must become one.** A Domain binds a
+table set to a guard, and `build_domain_agent` hands every Domain a
+`sql_query` tool. These two are the agents most exposed to being talked into
+something — one takes arbitrary user chat, the other reads pages written by
+strangers — so they are the ones with no database access at all,
+structurally rather than by instruction. A consistency test excludes them
+from the route/domain equality check and says why.
+
+**What leaves the building.** A search query is logged by a third party.
+"Egypt real estate outlook" is fine; "is <client name> creditworthy" is not.
+The tool cannot tell them apart, so the prompt carries the rule and the
+architecture enforces it: only the Research Agent holds the tool, and it
+never sees CRM rows. When a turn needs both, the specialists run separately
+and are merged afterwards — the two halves never meet inside the agent that
+can talk to the outside.
+
+**What comes back is untrusted**, in the same sense as an uploaded file and
+rather more so: a file at least came from the user. The payload carries
+`UNTRUSTED_NOTE` and the prompt has a section on it, exactly as the workspace
+does.
+
+**A bug this found while being written.** The first `parse_plan` split on
+commas unconditionally, so prose became a plan: "This is about leads, not
+deals." returned `["leads", "deals"]` — fanning out to two specialists on a
+*negation*, and answering with the domain the classifier had just rejected.
+Doubling the cost of a turn to give a worse answer, and the same shape as the
+order-dependent substring bug `parse_route` was rewritten to fix. A reply is
+now a plan only when **every** comma-separated part is a bare route name.
+
+**And one the change caused.** Collect mode first returned `findings` alone,
+and everything reading the trace went blank — `tools_used` in the API, the
+tool pills in the UI, and every tool-call assertion in the complex suite,
+which dropped 12/12 to 0/12. The answer was fine; the record of how it was
+reached had vanished. Specialists now write the working to `messages` and the
+answer to `findings`, holding back their final message so `synthesise`
+provides the one visible answer.
 
 ## Recurring bug family: denominators
 
