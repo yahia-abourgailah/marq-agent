@@ -775,7 +775,22 @@ Doubling the cost of a turn to give a worse answer, and the same shape as the
 order-dependent substring bug `parse_route` was rewritten to fix. A reply is
 now a plan only when **every** comma-separated part is a bare route name.
 
-**And one the change caused.** Collect mode first returned `findings` alone,
+**And the one that made it into a commit.** `findings` used `operator.add`
+and is checkpointed, so it accumulated across turns and was never cleared.
+The second turn of a conversation saw the first turn's findings still there,
+concluded two specialists had run, and merged the previous answer into the
+new one — "okay" came back as a list of Egyptian property developers left
+over from the question before it.
+
+Every check after building the orchestration was a **single turn in a fresh
+thread**, and every one looked perfect. The bug lives only in the second turn
+of a shared thread. `messages` accumulating across turns is exactly what you
+want, and `findings` looked identical, which is what made the difference
+invisible: anything checkpointed with a concatenating reducer needs an
+answer to "when does this end". `None` is now the reset signal and the
+supervisor sends it at the top of every turn.
+
+**And one more the change caused.** Collect mode first returned `findings` alone,
 and everything reading the trace went blank — `tools_used` in the API, the
 tool pills in the UI, and every tool-call assertion in the complex suite,
 which dropped 12/12 to 0/12. The answer was fine; the record of how it was

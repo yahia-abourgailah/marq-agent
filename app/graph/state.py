@@ -4,12 +4,40 @@ Conversation state shared across graph nodes.
 
 from __future__ import annotations
 
-import operator
 from typing import Annotated, Any, NotRequired
 
 from langchain_core.messages import AnyMessage
 from langgraph.graph.message import add_messages
 from typing_extensions import TypedDict
+
+
+def collect_findings(
+    existing: list[dict[str, Any]] | None,
+    incoming: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """
+    [claude] Accumulate findings within a turn; clear them between turns.
+
+    This was `operator.add`, which accumulates forever. `findings` is
+    checkpointed, so turn two saw turn one's findings still sitting there,
+    concluded that two specialists had run, and merged the previous
+    answer into the new one — "okay" was answered with a list of Egyptian
+    property developers left over from the question before it.
+
+    A plain reducer cannot express "start again", so `None` is the reset
+    signal and the supervisor sends it at the top of every turn. It is the
+    one value a node would never append.
+
+    The bug is worth remembering rather than just fixing: `messages`
+    accumulating across turns is exactly what you want, and `findings`
+    looking identical made the difference invisible. Anything checkpointed
+    with a concatenating reducer needs an answer to "when does this end".
+    """
+
+    if incoming is None:
+        return []
+
+    return [*(existing or []), *incoming]
 
 
 class AgentState(TypedDict):
@@ -69,10 +97,10 @@ class AgentState(TypedDict):
     # the same shape as every other bug this project has found: a complete
     # looking answer that quietly dropped half the question.
     #
-    # `operator.add` on lists concatenates, so order follows completion
-    # rather than the plan. The synthesis step sorts by domain name so the
-    # merged answer does not reorder itself run to run.
-    findings: Annotated[list[dict[str, Any]], operator.add]
+    # Concatenating, so order follows completion rather than the plan. The
+    # synthesis step sorts by specialist name so a merged answer does not
+    # reorder itself run to run.
+    findings: Annotated[list[dict[str, Any]], collect_findings]
 
 
 __all__ = ["AgentState"]

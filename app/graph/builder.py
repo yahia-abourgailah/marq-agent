@@ -299,9 +299,17 @@ def build_supervisor_graph(checkpointer=None):
 
         plan = await choose_plan(model, state["messages"])
 
+        # [claude] `findings: None` clears the previous turn's results.
+        #
+        # Without it they accumulate — `findings` is checkpointed and its
+        # reducer concatenates — so the second turn in a conversation saw
+        # the first turn's findings, believed two specialists had run, and
+        # merged a stale answer into the new one. "okay" came back as a
+        # list of property developers from the question before it.
+        #
         # `route` keeps holding the primary specialist, unchanged, so every
         # existing trace, eval and API response keeps working.
-        return {"plan": plan, "route": plan[0]}
+        return {"plan": plan, "route": plan[0], "findings": None}
 
     def _toolless_node(name: str, prompt: str, tools=None):
         """

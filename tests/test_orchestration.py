@@ -226,3 +226,100 @@ def test_findings_has_a_reducer():
     assert hasattr(hints["findings"], "__metadata__"), (
         "findings needs an Annotated reducer, or parallel specialists collide"
     )
+
+
+# ============================================================
+# Findings must not leak between turns
+# ============================================================
+
+
+def test_findings_accumulate_within_a_turn():
+    from app.graph.state import collect_findings
+
+    first = collect_findings([], [{"specialist": "deals", "answer": "a"}])
+    both = collect_findings(first, [{"specialist": "research", "answer": "b"}])
+
+    assert [f["specialist"] for f in both] == ["deals", "research"]
+
+
+def test_findings_are_cleared_by_the_reset_signal():
+    """
+    [claude] The bug this exists for.
+
+    `findings` was `operator.add` and is checkpointed, so it accumulated
+    across turns. Turn two saw turn one's findings still there, concluded
+    two specialists had run, and merged the previous answer into the new
+    one — "okay" came back as a list of Egyptian property developers left
+    over from the question before it.
+
+    `None` is the reset signal because it is the one value a specialist
+    would never append.
+    """
+
+    existing = [{"specialist": "research", "answer": "stale"}]
+
+    assert collect_findings_reset(existing) == []
+
+
+def collect_findings_reset(existing):
+    from app.graph.state import collect_findings
+
+    return collect_findings(existing, None)
+
+
+@pytest.mark.asyncio
+async def test_findings_do_not_leak_between_turns_of_one_conversation():
+    """
+    [claude] End to end, with a fake model, because the bug only appeared
+    across turns.
+
+    Every check I ran after building the orchestration was a single turn in
+    a fresh thread, and it looked perfect. The second turn in a *shared*
+    thread was where `findings` — checkpointed, with a concatenating
+    reducer — still held the previous turn's results. This runs three turns
+    on one thread, which is the shape that caught it.
+    """
+
+    from langchain_core.messages import AIMessage, HumanMessage
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    import app.graph.builder as builder
+
+    class FakeModel:
+        async def ainvoke(self, messages, **kwargs):
+            def content_of(m):
+                # The supervisor passes dicts; the specialists pass Message
+                # objects. Handle both rather than assume one.
+                if isinstance(m, dict):
+                    return str(m.get("content", ""))
+                return str(getattr(m, "content", ""))
+
+            text = " ".join(content_of(m) for m in messages)
+            # The supervisor's prompt is the one asking for a single word.
+            if "Reply with one word" in text:
+                return AIMessage(content="general")
+
+            return AIMessage(content="a fresh reply")
+
+    original = builder.get_model
+    builder.get_model = lambda: FakeModel()
+
+    try:
+        graph = builder.build_supervisor_graph(checkpointer=InMemorySaver())
+        config = {"configurable": {"thread_id": "leak-check"}}
+
+        for question in ("first", "second", "third"):
+            result = await graph.ainvoke(
+                {"messages": [HumanMessage(content=question)]}, config=config
+            )
+
+            findings = result.get("findings") or []
+
+            # One specialist ran, so exactly one finding — never a pile.
+            assert len(findings) == 1, (
+                f"after {question!r}: {len(findings)} findings, "
+                "so a previous turn's results survived"
+            )
+            assert result["messages"][-1].content == "a fresh reply"
+    finally:
+        builder.get_model = original
