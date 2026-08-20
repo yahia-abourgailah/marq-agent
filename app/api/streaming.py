@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -58,6 +59,66 @@ def sse(event: str, data: dict[str, Any]) -> dict[str, str]:
     """One Server-Sent Event, as sse-starlette wants it."""
 
     return {"event": event, "data": json.dumps(data, default=str)}
+
+
+# [claude] Tool-call syntax that leaked into prose.
+#
+# When a model wants a tool it does not have, it sometimes emits the call
+# as *text* rather than as a structured call. The user then sees
+# `<|tool_call>call:make_chart{kind:<|"|>pie<|"|>…}` where an answer should
+# be — gibberish, and gibberish that looks like the system broke open.
+#
+# The real fix is giving the agent the tool it reached for, which is done.
+# This is the guard for the next time, because a leak is unreadable
+# whatever caused it, and the failure is silent: nothing raises, the turn
+# "succeeds", and only a person reading the screen can tell.
+_TOOL_CALL_LEAK = re.compile(
+    r"<\|?\s*tool_call.*?tool_call\s*\|?>"      # <|tool_call>…<tool_call|>
+    r"|<tool_call>.*?</tool_call>"                # <tool_call>…</tool_call>
+    r"|\{\s*\"?name\"?\s*:\s*\"?(?:make_chart|sql_query|web_search)\b.*?\}",
+    re.DOTALL | re.IGNORECASE,
+)
+
+# The per-token escape some servers wrap string arguments in. Left behind
+# when the block above matches only part of a malformed call.
+_TOKEN_ARTEFACT = re.compile(r"<\|\"\|>")
+
+
+def strip_tool_leak(text: str) -> str:
+    """Remove tool-call syntax that reached the prose."""
+
+    cleaned = _TOOL_CALL_LEAK.sub("", text or "")
+    cleaned = _TOKEN_ARTEFACT.sub("", cleaned)
+
+    return cleaned.strip()
+
+
+def clean_answer(text: str, request_id: str | None = None) -> str:
+    """
+    The answer as a person should see it.
+
+    Returns a plain apology rather than an empty bubble when a reply was
+    *entirely* a leaked call — an empty answer reads as the agent ignoring
+    the question.
+    """
+
+    original = text or ""
+    cleaned = strip_tool_leak(original)
+
+    if cleaned == original.strip():
+        return original.strip()
+
+    logger.warning(
+        "tool_call_leaked_into_answer",
+        extra={"request_id": request_id, "removed": len(original) - len(cleaned)},
+    )
+
+    if not cleaned:
+        return (
+            "I wasn't able to put that together properly — please ask again."
+        )
+
+    return cleaned
 
 
 def route_from(output: Any) -> str | None:
@@ -108,7 +169,7 @@ def answer_of(messages: list[Any]) -> str:
 
         if isinstance(content, str) and content.strip():
             if getattr(message, "type", None) in ("ai", "AIMessageChunk"):
-                return content.strip()
+                return clean_answer(content)
 
     return ""
 
@@ -284,7 +345,7 @@ async def stream_turn(
             "final",
             {
                 "thread_id": thread_id,
-                "answer": "".join(parts).strip(),
+                "answer": clean_answer("".join(parts), request_id),
                 "route": route,
                 "specialists": plan,
                 "tools_used": tools,
@@ -297,6 +358,8 @@ async def stream_turn(
 __all__ = [
     "SUPERVISOR_NODE",
     "answer_of",
+    "clean_answer",
+    "strip_tool_leak",
     "charts_of",
     "provenance_of",
     "route_from",

@@ -149,14 +149,25 @@ Deciding — work down this list and stop at the first match:
 3. Is it entirely about leads, with deals never mentioned or implied?
    -> leads
 
-4. Is there no CRM subject at all?  -> general
+4. Does it ask you to do something WITH the previous answer rather than
+   ask something new — "chart that", "give me a graph", "show it as a
+   table", "break that down", "why?", "and last year?"  ->  stay with the
+   specialist that answered last.
 
-5. Does it mention none of them by name and continue the previous turn?
+   This outranks rule 5. "Give me a graph" has no CRM subject in it, so
+   rule 5 would send it to `general` — which does not have the figures the
+   previous turn just produced, and would either refuse or invent. A
+   follow-up belongs to whoever holds the data it refers to.
+
+5. Is there no CRM subject at all, and no reference to a previous answer?
+   -> general
+
+6. Does it mention none of them by name and continue the previous turn?
    -> stay with the specialist that answered last
 
-Rules 1 and 2 outrank rule 5: if a follow-up brings a file into a deals
-conversation it moves to workspace, and if it brings deals into a leads
-conversation it moves to deals.
+Rules 1 and 2 outrank rules 4 and 6: if a follow-up brings a file into a
+deals conversation it moves to workspace, and if it brings deals into a
+leads conversation it moves to deals.
 
 Restricted or unavailable data is NOT general. If the subject is a CRM
 thing — a deal, a lead, a franchise, a project, a stage, a source, a user —

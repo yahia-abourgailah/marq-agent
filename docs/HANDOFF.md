@@ -845,6 +845,39 @@ across three runs at the original ceiling. The rule this file already states
 — **do not restate tool docstrings in the system prompt** — is what I broke,
 and the docstring already carried the kinds and the arguments.
 
+## A leaked tool call, and why it happened
+
+Reported from a screenshot, 19 August 2026. Asked "give me a graph" after a
+research answer, the user saw this where the answer should be:
+
+    <|tool_call>call:make_chart{kind:<|"|>pie<|"|>,labels:[...]}<tool_call|>
+
+Three separate faults, each worth knowing:
+
+1. **The follow-up was misrouted.** "Give me a graph" contains no CRM
+   subject, so rule 4 of the supervisor's list sent it to `general` — which
+   does not hold the figures the previous turn produced. A follow-up that
+   asks you to do something *with* the last answer now outranks that rule
+   and stays with the specialist holding the data.
+
+2. **That specialist could not chart anyway.** `make_chart` was only on the
+   CRM domains. Both `general` and `research` have it now; it reaches no
+   database, no files and no network, so this widens nothing — the
+   sealed-agent guarantee is about data surface, and charting has none.
+
+3. **The leak reached the screen at all.** A model that wants a tool it does
+   not have sometimes emits the call as *text*. `clean_answer` in
+   `app/api/streaming.py` strips tool-call syntax from any answer and
+   substitutes a plain apology when a reply was nothing else. The real fix
+   is (2); this is the guard for the next time, because the failure is
+   silent — nothing raises, the turn "succeeds", and only a person reading
+   the screen can tell.
+
+Also fixed while there: the toolless specialists did not propagate their
+intermediate messages, so a research turn that plainly searched and charted
+reported `tools_used: []`. Same gap collect mode had — the answer was right
+and the record of how it was reached was missing.
+
 ## Recurring bug family: denominators
 
 Five variants found, all producing a confident wrong number rather than an error:

@@ -286,6 +286,14 @@ async def test_findings_do_not_leak_between_turns_of_one_conversation():
     import app.graph.builder as builder
 
     class FakeModel:
+        # [claude] `bind_tools` is required now that the toolless
+        # specialists carry `make_chart` and therefore go through
+        # `create_agent`. Without it the node fell into its exception
+        # handler and the turn degraded — the findings assertion still
+        # held, which is what this test is for, but the answer did not.
+        def bind_tools(self, tools, **kwargs):
+            return self
+
         async def ainvoke(self, messages, **kwargs):
             def content_of(m):
                 # The supervisor passes dicts; the specialists pass Message
@@ -323,3 +331,99 @@ async def test_findings_do_not_leak_between_turns_of_one_conversation():
             assert result["messages"][-1].content == "a fresh reply"
     finally:
         builder.get_model = original
+
+
+# ============================================================
+# Tool-call syntax must never reach a reader
+# ============================================================
+
+
+LEAK = (
+    '<|tool_call>call:make_chart{kind:<|"|>pie<|"|>,'
+    'labels:[<|"|>Domestic<|"|>,<|"|>International<|"|>],'
+    'values:[461,643]}<tool_call|>'
+)
+
+
+def test_a_leaked_tool_call_is_removed():
+    """
+    [claude] Reported from a screenshot: asked for a graph, the user got
+    `<|tool_call>call:make_chart{kind:<|"|>pie…` where the answer should be.
+
+    A model that wants a tool it does not have sometimes emits the call as
+    *text*. The real fix is giving it the tool — done — but the leak is
+    unreadable whatever caused it, and it fails silently: nothing raises,
+    the turn "succeeds", and only a person reading the screen can tell.
+    """
+
+    from app.api.streaming import strip_tool_leak
+
+    assert strip_tool_leak(LEAK) == ""
+    assert "tool_call" not in strip_tool_leak("Revenue was $1.1bn.\n\n" + LEAK)
+
+
+def test_prose_around_a_leak_survives():
+    from app.api.streaming import clean_answer
+
+    assert clean_answer("Revenue was $1.1bn.\n\n" + LEAK) == "Revenue was $1.1bn."
+
+
+def test_an_answer_that_was_only_a_leak_says_something():
+    """An empty bubble reads as the agent ignoring the question."""
+
+    from app.api.streaming import clean_answer
+
+    answer = clean_answer(LEAK)
+
+    assert answer
+    assert "tool_call" not in answer
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "There are 315 deals in total.",
+        "Use `sql_query` to fetch it.",
+        "The make_chart tool draws it.",
+        "",
+    ],
+)
+def test_ordinary_answers_are_untouched(text):
+    """
+    The guard must not eat prose that merely mentions a tool. A filter that
+    corrupts correct answers is worse than the leak it prevents.
+    """
+
+    from app.api.streaming import clean_answer
+
+    assert clean_answer(text) == text.strip()
+
+
+# ============================================================
+# Charting is available wherever numbers are
+# ============================================================
+
+
+def test_the_research_agent_can_chart():
+    """
+    "Give me a graph" after a research answer reached an agent with no
+    charting tool, and the model emitted the call as text rather than
+    admitting it could not. It reaches no database, no files and no network,
+    so giving it here widens nothing.
+    """
+
+    from app.tools.charts import CHART_TOOLS
+    from app.tools.web import build_web_tools
+
+    research_tools = {t.name for t in [*build_web_tools(client=object()), *CHART_TOOLS]}
+
+    assert research_tools == {"web_search", "make_chart"}
+    assert "sql_query" not in research_tools
+
+
+def test_every_domain_can_chart():
+    from app.graph.agents.domain import DOMAINS
+
+    for name, domain in DOMAINS.items():
+        names = {getattr(t, "name", "") for t in domain.extra_tools}
+        assert "make_chart" in names, name

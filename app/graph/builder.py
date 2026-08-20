@@ -31,6 +31,7 @@ from app.graph.supervisor import (
     out_of_scope_message,
 )
 from app.llm.model import get_model
+from app.tools.charts import CHART_TOOLS
 from app.tools.web import build_web_tools
 from app.tools.workspace import WorkspaceContext
 
@@ -329,6 +330,8 @@ def build_supervisor_graph(checkpointer=None):
         )
 
         async def node(state: AgentState):
+            trace: list = []
+
             try:
                 if agent is None:
                     reply = await model.ainvoke(
@@ -340,25 +343,54 @@ def build_supervisor_graph(checkpointer=None):
                         {"messages": state["messages"]},
                         config={"recursion_limit": MAX_AGENT_STEPS},
                     )
-                    answer = result["messages"][-1].content
+                    produced = result["messages"][len(state["messages"]) :]
+                    answer = produced[-1].content if produced else ""
+                    # [claude] The working goes to `messages`, as the domain
+                    # nodes already do. Without it `tools_used` came back
+                    # empty for a research turn that had plainly searched
+                    # and charted — the answer was right and the record of
+                    # how it was reached was missing, which is the same gap
+                    # collect mode had.
+                    trace = list(produced[:-1])
             except Exception:
                 # A failure in one specialist must not take the turn down —
                 # synthesise reports what it has.
                 logger.exception("specialist_failed", extra={"specialist": name})
                 answer = ""
 
-            return {"findings": [{"specialist": name, "answer": str(answer or "")}]}
+            return {
+                "findings": [{"specialist": name, "answer": str(answer or "")}],
+                "messages": trace,
+            }
 
         return node
 
     graph.add_node("supervisor", supervisor_node)
+
+    # [claude] Both of these get `make_chart` too.
+    #
+    # "Give me a graph" after a research answer used to reach an agent with
+    # no charting tool at all, and the model did what models do when a
+    # capability is missing but obviously wanted: it emitted the tool call
+    # as raw text, and the user saw
+    # `<|tool_call>call:make_chart{kind:<|"|>pie…` in place of an answer.
+    #
+    # This widens nothing. `make_chart` reaches no database, no files and no
+    # network — it validates numbers the agent already has and hands them to
+    # the client to draw. The sealed-agent guarantee is about data surface,
+    # and charting has none.
     graph.add_node(
-        GENERAL_ROUTE, _toolless_node(GENERAL_ROUTE, GENERAL_AGENT_SYSTEM_PROMPT)
+        GENERAL_ROUTE,
+        _toolless_node(
+            GENERAL_ROUTE, GENERAL_AGENT_SYSTEM_PROMPT, tools=CHART_TOOLS
+        ),
     )
     graph.add_node(
         RESEARCH_ROUTE,
         _toolless_node(
-            RESEARCH_ROUTE, RESEARCH_AGENT_SYSTEM_PROMPT, tools=build_web_tools()
+            RESEARCH_ROUTE,
+            RESEARCH_AGENT_SYSTEM_PROMPT,
+            tools=[*build_web_tools(), *CHART_TOOLS],
         ),
     )
 
