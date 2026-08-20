@@ -798,6 +798,53 @@ reached had vanished. Specialists now write the working to `messages` and the
 answer to `findings`, holding back their final message so `synthesise`
 provides the one visible answer.
 
+## Charts
+
+Added 19 August 2026. `make_chart` in `app/tools/charts.py`, available to
+every CRM domain. The agent states figures it just retrieved; the browser
+draws them from a small JSON spec. No matplotlib, no image bytes through the
+model, and no chance of the model describing a picture it cannot see.
+
+**A chart is more persuasive than a sentence, which cuts both ways.** The
+failure this project keeps finding is a confident wrong number, and a wrong
+number drawn as a bar is worse than the same number in prose — a reader
+checks a sentence and trusts a picture. Three things follow, and they are
+the design:
+
+- every value is labelled on the mark **and** listed in the chart's table
+  view, so nothing is readable only as a length;
+- the chart sits in the same response as the `provenance` SQL that produced
+  the figures, so both are inspectable together;
+- the spec is **validated, not trusted** — mismatched label/value lengths, a
+  donut of negatives, non-finite numbers and absurd category counts are
+  refused, because a chart that renders wrong is far harder to spot than one
+  that does not render.
+
+**The palette was computed, not chosen.** The raw brand colours fail three of
+the five checks: burgundy sits below the OKLCH lightness band, charcoal has
+zero chroma, and gold falls under both the chroma floor and 3:1 contrast.
+`#A82F48 · #9E7410 · #00795F · #4A4FA8` are brand-faithful steps that pass
+all five on the ivory and white surfaces alike. Slot 1 carries every
+single-series chart, which is the common case — a nominal bar chart is one
+colour and the title says what it is, so there is no legend.
+
+**Two mistakes worth remembering.**
+
+*The trigger was too loose for one commit.* The prompt invited a chart when a
+breakdown "is plainly easier to read as a picture", and the agent immediately
+began charting ordinary grouped questions nobody had asked to see. Judgement
+about readability is not the trigger; the user asking is.
+
+*Prompt bloat, not the step ceiling.* Adding a 1,240-character CHARTS section
+to each domain prompt broke `vague_franchise_question_uses_real_metrics`: the
+agent asked about staleness eight times, was refused each time, and exhausted
+its budget — "I ran out of steps" on every run. I first raised
+`MAX_AGENT_STEPS` from 16 to 20, which fixed nothing, because the budget was
+never the constraint. Cutting the section to 381 characters restored 18/18
+across three runs at the original ceiling. The rule this file already states
+— **do not restate tool docstrings in the system prompt** — is what I broke,
+and the docstring already carried the kinds and the arguments.
+
 ## Recurring bug family: denominators
 
 Five variants found, all producing a confident wrong number rather than an error:

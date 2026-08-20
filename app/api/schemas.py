@@ -135,6 +135,40 @@ class ChatResponse(BaseModel):
         ),
     )
 
+    charts: list[Chart] = Field(
+        default_factory=list,
+        description=(
+            "Charts the agent drew for this answer, in the order it made "
+            "them. Empty unless the user asked to see one."
+        ),
+    )
+
+
+class ChartSeries(BaseModel):
+    name: str
+    values: list[float]
+
+
+class Chart(BaseModel):
+    """
+    A chart the agent asked for, as a spec the client renders.
+
+    [claude] A spec rather than an image: no bytes travel through the model,
+    and the model cannot describe a picture it never saw. It states the
+    numbers; the browser draws them.
+
+    Every value is also rendered as a label and listed in the chart's table
+    view, so nothing is visible only as a length — a chart is more
+    persuasive than a sentence, and the failure this project keeps finding
+    is a confident wrong number.
+    """
+
+    title: str
+    kind: str = Field(description="bar · column · line · donut")
+    labels: list[str]
+    series: list[ChartSeries]
+    value_suffix: str | None = None
+
 
 class ConversationSummary(BaseModel):
     """One row of the conversation list."""
@@ -245,6 +279,8 @@ class ReadinessResponse(BaseModel):
 
 
 __all__ = [
+    "Chart",
+    "ChartSeries",
     "ChatRequest",
     "ChatResponse",
     "ComponentHealth",

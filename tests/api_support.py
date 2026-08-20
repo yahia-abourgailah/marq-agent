@@ -40,6 +40,7 @@ from app.auth.jwt import TokenVerifier
 from app.config import settings as base_settings
 from app.db.repositories.conversations import Conversation
 from app.sql import provenance
+from app.tools import charts as chart_tools
 
 ISSUER = "https://issuer.test"
 AUDIENCE = "marq-agent-test"
@@ -144,11 +145,18 @@ class StubGraph:
     # app/sql/provenance.py.
     sql: str | None = "SELECT count(*) AS deals_count FROM deals"
 
+    # A chart the stub pretends to have drawn, so the passthrough can be
+    # asserted through HTTP.
+    chart: dict | None = None
+
     def _record_sql(self) -> None:
         if self.sql:
             provenance.record(
                 sql=self.sql, question="stubbed", rows_available=1
             )
+
+        if self.chart:
+            chart_tools.record(self.chart)
 
     def _messages(self) -> list[Any]:
         return [

@@ -515,3 +515,88 @@ async def test_the_generated_sql_still_never_reaches_the_token_stream(issuer):
     )
 
     assert "secret_column" not in streamed
+
+
+# ============================================================
+# Charts
+# ============================================================
+
+
+CHART = {
+    "title": "Deals by status",
+    "kind": "column",
+    "labels": ["contracted", "cancelled"],
+    "series": [{"name": "Deals", "values": [225.0, 70.0]}],
+    "value_suffix": None,
+}
+
+
+@pytest.mark.asyncio
+async def test_a_chart_reaches_the_client_with_its_values(issuer):
+    graph = StubGraph(chart=CHART)
+    app, _ = build_app(verifier=issuer.verifier(), graph=graph)
+
+    async with client(app) as http:
+        response = await http.post(
+            "/v1/chat",
+            json={"message": "chart deals by status"},
+            headers=issuer.auth(),
+        )
+
+    charts = response.json()["charts"]
+
+    assert len(charts) == 1
+    assert charts[0]["title"] == "Deals by status"
+    assert charts[0]["series"][0]["values"] == [225.0, 70.0]
+
+
+@pytest.mark.asyncio
+async def test_a_turn_without_a_chart_reports_an_empty_list(issuer):
+    app, _ = build_app(verifier=issuer.verifier(), graph=StubGraph())
+
+    async with client(app) as http:
+        response = await http.post(
+            "/v1/chat", json={"message": "how many deals"}, headers=issuer.auth()
+        )
+
+    assert response.json()["charts"] == []
+
+
+@pytest.mark.asyncio
+async def test_the_stream_carries_charts_on_the_final_event(issuer):
+    """Both paths must agree; a second code path is where a field is dropped."""
+
+    app, _ = build_app(verifier=issuer.verifier(), graph=StubGraph(chart=CHART))
+
+    async with client(app) as http:
+        response = await http.post(
+            "/v1/chat/stream",
+            json={"message": "chart it"},
+            headers=issuer.auth(),
+        )
+
+    events = sse_events(response.text)
+    final = json.loads(next(data for name, data in events if name == "final"))
+
+    assert final["charts"][0]["series"][0]["values"] == [225.0, 70.0]
+
+
+@pytest.mark.asyncio
+async def test_charts_do_not_leak_between_requests(issuer):
+    """
+    Context-local, like provenance. A leak here would put one user's figures
+    into another user's chart — a wrong number, drawn.
+    """
+
+    app, _ = build_app(verifier=issuer.verifier(), graph=StubGraph(chart=CHART))
+
+    async with client(app) as http:
+        first = await http.post(
+            "/v1/chat", json={"message": "one"}, headers=issuer.auth("a@x.com")
+        )
+        second = await http.post(
+            "/v1/chat", json={"message": "two"}, headers=issuer.auth("b@x.com")
+        )
+
+    assert len(first.json()["charts"]) == 1
+    assert len(second.json()["charts"]) == 1

@@ -46,6 +46,7 @@ from langchain_core.messages import HumanMessage
 from app.auth.principal import Principal
 from app.config import settings
 from app.sql import provenance
+from app.tools import charts as chart_tools
 
 logger = logging.getLogger("marq.api")
 
@@ -138,6 +139,12 @@ def provenance_of(collector: provenance.Collector | None) -> list[dict[str, Any]
     return [record.as_dict() for record in collector.records]
 
 
+def charts_of(collector) -> list[dict[str, Any]]:
+    """The charts drawn during a turn, as JSON."""
+
+    return list(collector.charts) if collector is not None else []
+
+
 def graph_input(principal: Principal, message: str) -> dict[str, Any]:
     """
     The graph's input state for one turn.
@@ -195,7 +202,7 @@ async def stream_turn(
 
     # [claude] Collects the SQL each tool call runs, out of band — the
     # queries never enter the model's context. See app/sql/provenance.py.
-    with provenance.collect() as collector:
+    with provenance.collect() as collector, chart_tools.collect() as drawn:
         try:
             async for event in graph.astream_events(
                 graph_input(principal, message),
@@ -282,6 +289,7 @@ async def stream_turn(
                 "specialists": plan,
                 "tools_used": tools,
                 "provenance": provenance_of(collector),
+                "charts": charts_of(drawn),
             },
         )
 
@@ -289,6 +297,7 @@ async def stream_turn(
 __all__ = [
     "SUPERVISOR_NODE",
     "answer_of",
+    "charts_of",
     "provenance_of",
     "route_from",
     "graph_input",

@@ -51,6 +51,7 @@ from app.sql.catalogue import DEALS_TABLE, LEADS_TABLE, USERS_TABLE, Table
 from app.sql.executor import SQLExecutor
 from app.sql.guard import SQLGuard
 from app.tools.analysis import ANALYSIS_TOOLS
+from app.tools.charts import CHART_TOOLS
 from app.tools.leads import LEADS_TOOLS
 from app.tools.sql import build_sql_tool
 from app.tools.workspace import WorkspaceContext, build_workspace_tools
@@ -72,7 +73,13 @@ class Domain:
 
     # Tools beyond sql_query. The analysis tools are arithmetic helpers with
     # no domain knowledge, so every domain gets them.
-    extra_tools: Sequence[Any] = field(default=tuple(ANALYSIS_TOOLS))
+    # [claude] Charting is in the default set, so every domain can draw
+    # what it just measured. It reaches nothing — no database, no files, no
+    # network — it only validates numbers the agent already has and hands
+    # them to the client to render.
+    extra_tools: Sequence[Any] = field(
+        default=tuple([*ANALYSIS_TOOLS, *CHART_TOOLS])
+    )
 
     # [claude] Step ceiling for this domain's ReAct loop, or None for the
     # graph default.
@@ -130,7 +137,7 @@ LEADS = Domain(
     # supervisor rather than to either agent widening its own surface.
     tables=(LEADS_TABLE, USERS_TABLE),
     system_prompt=LEADS_AGENT_SYSTEM_PROMPT,
-    extra_tools=(*ANALYSIS_TOOLS, *LEADS_TOOLS),
+    extra_tools=(*ANALYSIS_TOOLS, *CHART_TOOLS, *LEADS_TOOLS),
 )
 
 

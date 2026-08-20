@@ -26,6 +26,7 @@ from app.api.errors import request_id_of
 from app.api.schemas import ChatRequest, ChatResponse
 from app.api.streaming import (
     answer_of,
+    charts_of,
     graph_input,
     provenance_of,
     run_config,
@@ -34,6 +35,7 @@ from app.api.streaming import (
 )
 from app.db.repositories.conversations import make_title
 from app.sql import provenance
+from app.tools import charts as chart_tools
 
 logger = logging.getLogger("marq.api")
 
@@ -78,7 +80,7 @@ async def chat(
     # the model's context — see app/sql/provenance.py. The same helper wraps
     # the streaming path, so the two cannot report different queries for the
     # same turn.
-    with provenance.collect() as collector:
+    with provenance.collect() as collector, chart_tools.collect() as drawn:
         result = await graph.ainvoke(
             graph_input(principal, body.message),
             config=run_config(thread_key, request_id_of(request)),
@@ -106,6 +108,7 @@ async def chat(
         specialists=list(result.get("plan") or []),
         tools_used=tools_used_in(messages),
         provenance=records,
+        charts=charts_of(drawn),
     )
 
 
