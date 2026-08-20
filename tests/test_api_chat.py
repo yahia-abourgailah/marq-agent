@@ -12,6 +12,7 @@ filter cannot rot silently into passing.
 from __future__ import annotations
 
 import json
+import logging
 
 import pytest
 
@@ -600,3 +601,197 @@ async def test_charts_do_not_leak_between_requests(issuer):
 
     assert len(first.json()["charts"]) == 1
     assert len(second.json()["charts"]) == 1
+
+
+# ============================================================
+# How the turn ended
+# ============================================================
+#
+# [claude] The gap these close: `make_domain_node` degrades an out-of-steps
+# run into an apology in prose and returns it with a 200. Nothing about the
+# response or the logs distinguished that from a real answer, so the
+# operator watching this service could not count the failures it was
+# already having.
+
+
+def completion_lines(caplog):
+    """Every `chat_turn_complete` record, streamed or not."""
+
+    return [
+        record
+        for record in caplog.records
+        if record.getMessage() == "chat_turn_complete"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_normal_turn_reports_that_it_completed(issuer):
+    app, _ = build_app(verifier=issuer.verifier(), graph=StubGraph())
+
+    async with client(app) as http:
+        response = await http.post(
+            "/v1/chat", json={"message": "How many deals?"}, headers=issuer.auth()
+        )
+
+    assert response.json()["stop_reason"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_an_out_of_steps_turn_says_so_rather_than_looking_answered(issuer):
+    """
+    [claude] The case the field exists for.
+
+    The body still carries the agent's apology and the status is still 200,
+    because degrading is the right behaviour — a loop somewhere must not
+    take the request down. What changes is that the caller can now tell.
+    """
+
+    graph = StubGraph(
+        answer="I wasn't able to complete that request — I ran out of steps.",
+        stop_reason="out_of_steps",
+    )
+    app, _ = build_app(verifier=issuer.verifier(), graph=graph)
+
+    async with client(app) as http:
+        response = await http.post(
+            "/v1/chat", json={"message": "something that loops"}, headers=issuer.auth()
+        )
+
+    body = response.json()
+
+    assert response.status_code == 200
+    assert body["answer"]
+    assert body["stop_reason"] == "out_of_steps"
+
+
+@pytest.mark.asyncio
+async def test_the_turn_outcome_reaches_the_log(issuer, caplog):
+    """
+    The whole point. `chat_turn` is emitted before the graph runs, so on its
+    own it records only that a question arrived.
+    """
+
+    graph = StubGraph(stop_reason="out_of_steps")
+    app, _ = build_app(verifier=issuer.verifier(), graph=graph)
+
+    with caplog.at_level(logging.INFO, logger="marq.api"):
+        async with client(app) as http:
+            await http.post(
+                "/v1/chat", json={"message": "q"}, headers=issuer.auth()
+            )
+
+    lines = completion_lines(caplog)
+
+    assert len(lines) == 1
+    assert lines[0].stop_reason == "out_of_steps"
+    assert lines[0].route == "deals"
+    assert lines[0].subject == "employee-1"
+    assert lines[0].streamed is False
+
+
+@pytest.mark.asyncio
+async def test_a_crashed_turn_is_counted_as_an_error(issuer, caplog):
+    """
+    [claude] A monitor should not have to join two differently-named events
+    to count the turns that failed.
+    """
+
+    graph = StubGraph(raises=RuntimeError("the model went away"))
+    app, _ = build_app(verifier=issuer.verifier(), graph=graph)
+
+    with caplog.at_level(logging.INFO, logger="marq.api"):
+        async with client(app) as http:
+            response = await http.post(
+                "/v1/chat", json={"message": "q"}, headers=issuer.auth()
+            )
+
+    lines = completion_lines(caplog)
+
+    assert response.status_code == 500
+    assert len(lines) == 1
+    assert lines[0].stop_reason == "error"
+
+
+@pytest.mark.asyncio
+async def test_a_graph_that_published_no_reason_does_not_invent_one(issuer):
+    """
+    Falls back to `completed`, which is only honest because the turn did in
+    fact return an answer without raising. The value is defaulted at the end
+    of the run rather than assumed at the start of it.
+    """
+
+    app, _ = build_app(verifier=issuer.verifier(), graph=StubGraph(stop_reason=None))
+
+    async with client(app) as http:
+        response = await http.post(
+            "/v1/chat", json={"message": "q"}, headers=issuer.auth()
+        )
+
+    assert response.json()["stop_reason"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_the_stream_reports_the_outcome_on_the_final_event(issuer):
+    graph = StubGraph(answer="I ran out of steps.", stop_reason="out_of_steps")
+    app, _ = build_app(verifier=issuer.verifier(), graph=graph)
+
+    async with client(app) as http:
+        response = await http.post(
+            "/v1/chat/stream", json={"message": "q"}, headers=issuer.auth()
+        )
+
+    final = [
+        json.loads(data) for name, data in sse_events(response.text) if name == "final"
+    ]
+
+    assert final[0]["stop_reason"] == "out_of_steps"
+
+
+@pytest.mark.asyncio
+async def test_a_stream_that_fails_is_counted_as_an_error(issuer, caplog):
+    """
+    A stream cannot change its status code once it has started, so a failure
+    arrives as an event — and must still arrive in the log as a turn that
+    ended badly rather than as a turn that never ended at all.
+    """
+
+    graph = StubGraph(raises=RuntimeError("gone"))
+    app, _ = build_app(verifier=issuer.verifier(), graph=graph)
+
+    with caplog.at_level(logging.INFO, logger="marq.api"):
+        async with client(app) as http:
+            await http.post(
+                "/v1/chat/stream", json={"message": "q"}, headers=issuer.auth()
+            )
+
+    lines = completion_lines(caplog)
+
+    assert len(lines) == 1
+    assert lines[0].stop_reason == "error"
+    assert lines[0].streamed is True
+
+
+@pytest.mark.asyncio
+async def test_both_paths_log_the_same_shape(issuer, caplog):
+    """
+    [claude] One query over `chat_turn_complete` has to cover both
+    endpoints. Two log shapes for one event is how a dashboard ends up
+    quietly counting half the traffic.
+    """
+
+    app, _ = build_app(verifier=issuer.verifier(), graph=StubGraph())
+
+    with caplog.at_level(logging.INFO, logger="marq.api"):
+        async with client(app) as http:
+            await http.post("/v1/chat", json={"message": "q"}, headers=issuer.auth())
+            await http.post(
+                "/v1/chat/stream", json={"message": "q"}, headers=issuer.auth()
+            )
+
+    plain, streamed = completion_lines(caplog)
+    fields = {"request_id", "subject", "thread_id", "route", "stop_reason", "streamed"}
+
+    assert fields <= set(vars(plain))
+    assert fields <= set(vars(streamed))
+    assert plain.streamed is False
+    assert streamed.streamed is True

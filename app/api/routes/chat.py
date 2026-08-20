@@ -34,6 +34,7 @@ from app.api.streaming import (
     tools_used_in,
 )
 from app.db.repositories.conversations import make_title
+from app.graph.state import COMPLETED, ERROR
 from app.sql import provenance
 from app.tools import charts as chart_tools
 
@@ -81,12 +82,54 @@ async def chat(
     # the streaming path, so the two cannot report different queries for the
     # same turn.
     with provenance.collect() as collector, chart_tools.collect() as drawn:
-        result = await graph.ainvoke(
-            graph_input(principal, body.message),
-            config=run_config(thread_key, request_id_of(request)),
-        )
+        try:
+            result = await graph.ainvoke(
+                graph_input(principal, body.message),
+                config=run_config(thread_key, request_id_of(request)),
+            )
+        except Exception:
+            # [claude] Re-raised immediately — the error handlers own the
+            # response, and this changes nothing a caller sees. It exists so
+            # that a turn which crashed is countable in the same field as a
+            # turn that ran out of steps. A monitor that has to join two
+            # differently-named events to count failures will not.
+            logger.info(
+                "chat_turn_complete",
+                extra={
+                    "request_id": request_id_of(request),
+                    "subject": principal.subject,
+                    "thread_id": thread_id,
+                    "stop_reason": ERROR,
+                    "streamed": False,
+                },
+            )
+            raise
 
     messages = result["messages"]
+
+    # [claude] The reason the turn ended, beside the fact that it ended.
+    #
+    # `chat_turn` above is emitted before the graph runs, so on its own it
+    # says only that a question arrived. This is the line that says what
+    # happened to it — and until it existed, an out-of-steps run was
+    # invisible: the agent degrades to an apology in prose, the endpoint
+    # returns 200, and nothing anywhere recorded that the ceiling was hit.
+    #
+    # Defaults to `completed` only for a graph that published no reason at
+    # all; every graph built here publishes one.
+    stop_reason = result.get("stop_reason") or COMPLETED
+
+    logger.info(
+        "chat_turn_complete",
+        extra={
+            "request_id": request_id_of(request),
+            "subject": principal.subject,
+            "thread_id": thread_id,
+            "route": result.get("route"),
+            "stop_reason": stop_reason,
+            "streamed": False,
+        },
+    )
 
     # [claude] Recorded after the answer, not before. A question that raised
     # leaves no conversation in the user's list, so the list never contains a
@@ -109,6 +152,7 @@ async def chat(
         tools_used=tools_used_in(messages),
         provenance=records,
         charts=charts_of(drawn),
+        stop_reason=stop_reason,
     )
 
 

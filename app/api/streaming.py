@@ -46,6 +46,7 @@ from langchain_core.messages import HumanMessage
 
 from app.auth.principal import Principal
 from app.config import settings
+from app.graph.state import COMPLETED, ERROR, STOP_REASONS
 from app.sql import provenance
 from app.tools import charts as chart_tools
 
@@ -155,6 +156,30 @@ def route_from(output: Any) -> str | None:
     return None
 
 
+def stop_reason_from(output: Any) -> str | None:
+    """
+    A turn's stop reason out of an `on_chain_end` payload, if it carries one.
+
+    [claude] Applied to *every* chain-end rather than to a named node, and
+    that is deliberate. Matching on `langgraph_node == "synthesise"` would
+    tie the streaming path to one graph's node names — and `route_from`
+    above is already a written record of what assuming an event shape costs
+    here. Any node that publishes a valid reason is believed; the last one
+    wins, which is the node nearest the end of the run.
+
+    Only the four known values are accepted. A future node writing
+    something else into the channel should read as "no reason observed"
+    rather than reach the front end as a status nobody defined.
+    """
+
+    if not isinstance(output, dict):
+        return None
+
+    value = output.get("stop_reason")
+
+    return value if value in STOP_REASONS else None
+
+
 def answer_of(messages: list[Any]) -> str:
     """
     The reply to show, taken from the last AI message with text in it.
@@ -260,6 +285,7 @@ async def stream_turn(
     tools: list[str] = []
     parts: list[str] = []
     plan: list[str] = []
+    stop_reason: str | None = None
 
     # [claude] Collects the SQL each tool call runs, out of band — the
     # queries never enter the model's context. See app/sql/provenance.py.
@@ -299,8 +325,21 @@ async def stream_turn(
 
                         yield sse("token", {"text": text})
 
-                elif kind == "on_chain_end" and node == SUPERVISOR_NODE:
+                elif kind == "on_chain_end":
                     output = event.get("data", {}).get("output")
+
+                    # [claude] Checked on every chain-end, not just the
+                    # supervisor's — see stop_reason_from. The supervisor
+                    # clears the field at the top of the turn and the
+                    # reader ignores that, so the value that survives is
+                    # the one the final node published.
+                    observed = stop_reason_from(output)
+
+                    if observed is not None:
+                        stop_reason = observed
+
+                    if node != SUPERVISOR_NODE:
+                        continue
 
                     # [claude] The plan arrives with the route and is worth
                     # showing: a two-specialist turn takes noticeably longer,
@@ -327,7 +366,27 @@ async def stream_turn(
             # event.
             logger.exception(
                 "stream_failed",
-                extra={"request_id": request_id, "thread_id": thread_id},
+                extra={
+                    "request_id": request_id,
+                    "thread_id": thread_id,
+                    "stop_reason": ERROR,
+                },
+            )
+
+            # [claude] Logged as a completed turn too, with `error` as the
+            # reason. A monitor counting stop_reason should be able to see
+            # every turn that started, and a turn that died mid-stream is
+            # the one it most needs to count.
+            logger.info(
+                "chat_turn_complete",
+                extra={
+                    "request_id": request_id,
+                    "subject": principal.subject,
+                    "thread_id": thread_id,
+                    "route": route,
+                    "stop_reason": ERROR,
+                    "streamed": True,
+                },
             )
 
             yield sse(
@@ -341,6 +400,24 @@ async def stream_turn(
 
             return
 
+        # [claude] Defaulted only here, at the point the run has actually
+        # finished without raising. Defaulting earlier would mean an
+        # unobserved reason reads as `completed`, which is the exact
+        # confusion this field exists to remove.
+        stop_reason = stop_reason or COMPLETED
+
+        logger.info(
+            "chat_turn_complete",
+            extra={
+                "request_id": request_id,
+                "subject": principal.subject,
+                "thread_id": thread_id,
+                "route": route,
+                "stop_reason": stop_reason,
+                "streamed": True,
+            },
+        )
+
         yield sse(
             "final",
             {
@@ -351,6 +428,7 @@ async def stream_turn(
                 "tools_used": tools,
                 "provenance": provenance_of(collector),
                 "charts": charts_of(drawn),
+                "stop_reason": stop_reason,
             },
         )
 
@@ -363,6 +441,7 @@ __all__ = [
     "charts_of",
     "provenance_of",
     "route_from",
+    "stop_reason_from",  # [claude]
     "graph_input",
     "run_config",
     "sse",

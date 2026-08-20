@@ -1,15 +1,15 @@
 # marq-agent — handoff
 
-State as of `dev`, 19 August 2026.
+State as of `dev`, 20 August 2026.
 Read this first in a new session; it replaces having the previous conversation.
 
 **Where things stand.** The agent is reachable over HTTP, has a local UI in
-the brand, answers greetings, searches the web, draws charts, and keeps the
-SQL behind every answer. All suites green. The two things blocking real use
+the brand, answers greetings, searches the web, draws charts, keeps the SQL
+behind every answer, and now reports how each turn ended rather than letting
+an out-of-steps run pass for an answer. All suites green. The two things blocking real use
 are unchanged and are not code: **no CRM credentials**, and **row-level
 security is written but unapplied**, so every authenticated user can still
 read every row.
-Read this first in a new session; it replaces having the previous conversation.
 
 ---
 
@@ -152,9 +152,9 @@ Note: bare `python` may not be on PATH; the venv interpreter is
 `.venv/bin/python`.
 
 ```bash
-pytest                          # 594 hermetic, ~4s
+pytest                          # 849 hermetic, ~10s
 pytest -m "" --cov=app --cov-report=term-missing   # everything, 93%
-pytest -m integration           # 113, needs live model + PostgreSQL, ~3min
+pytest -m integration           # 132, needs live model + PostgreSQL, ~3min
 python -m evals.run             # 35 SQL cases
 python -m evals.graph_cases     # 18 whole-graph cases
 python -m evals.routing_cases   # 37 routing cases
@@ -909,17 +909,57 @@ the API work:
 | | State |
 |---|---|
 | `InMemorySaver` -> `langgraph-checkpoint-postgres` | **Done.** `open_checkpointer()` in `app/graph/checkpointer.py`; verified by surviving a real process restart. `build_checkpointer()` still returns an InMemorySaver and is unchanged, so the evals and Studio are unaffected. |
-| Structured logging | **Half done.** `app/logging_config.py` emits one JSON object per line and `LOG_LEVEL` is finally read — it had been in every `.env` template since the beginning and `extra="ignore"` was swallowing it. Question and answer text are redacted at the formatter, tested. **`stop_reason` is not done.** |
+| Structured logging | **Done.** `app/logging_config.py` emits one JSON object per line and `LOG_LEVEL` is finally read — it had been in every `.env` template since the beginning and `extra="ignore"` was swallowing it. Question and answer text are redacted at the formatter, tested. `stop_reason` closed 20 August — see below. |
 | CI running pytest + ruff on push | **Not started.** No `.github/` at all. `origin` is a real GitHub repo with `main`/`staging`/`dev`, so it is worth doing. |
 
-**`stop_reason` specifically.** `make_domain_node` still degrades a
-`GraphRecursionError` into a friendly `AIMessage` and logs nothing, so an
-out-of-steps run is indistinguishable from a real answer to anything watching
-— including, now, the API. That was tolerable when a human was reading a CLI
-trace and is not once a front end is attached: the operator has no way to
-tell "the agent ran out of steps" from "the agent answered". The turn should
-carry a reason (`completed` / `out_of_steps` / `refused` / `error`) into the
-log line the chat routes already emit.
+**`stop_reason` — done, 20 August 2026.** `make_domain_node` degraded a
+`GraphRecursionError` into a friendly `AIMessage` and logged nothing, so an
+out-of-steps run was indistinguishable from a real answer to anything
+watching — including the API. Every turn now carries one of `completed` /
+`out_of_steps` / `refused` / `error` into a `chat_turn_complete` log line,
+into `ChatResponse.stop_reason`, and onto the SSE `final` event.
+
+Three things about it are worth knowing before changing it:
+
+- **A specialist never writes the channel; `synthesise` does.** The
+  specialists run in one superstep, and two of them writing a plain channel
+  is `InvalidUpdateError` — the same collision `findings` carries a reducer
+  for. So each specialist records its outcome *inside its finding*, where the
+  reducer already handles the concurrency, and one node downstream resolves
+  the turn's single reason. `test_two_specialists_in_one_superstep_do_not_collide`
+  fails the moment someone "simplifies" that; the collision was reproduced
+  before the test was written, so it is guarding a real edge and not a
+  supposed one.
+
+- **Worst-wins across specialists.** A turn where deals answered and research
+  died reports `error`, not `completed`. The reader still gets the half that
+  worked — `synthesise` reports what it has — but a half answer that calls
+  itself complete is the exact failure shape this project keeps finding.
+
+- **No value is inferred from the answer text.** Each reason is decided by
+  control flow: an exception caught, a branch taken. `refused` is the
+  structural case where nothing came back with anything in it, so
+  `synthesise` fell through to the canned reply — not a guess that some prose
+  sounded like a refusal. An empty answer left behind by an exception is
+  labelled `error` at the point it is caught, so the two never collapse.
+
+`stop_reason_from` in `app/api/streaming.py` reads the value off *every*
+`on_chain_end` rather than matching `langgraph_node == "synthesise"`, and
+that was measured rather than assumed — the same care `route_from` above it
+documents. A real run emits two chain-ends carrying the reason:
+
+    name='synthesise'  node='synthesise'  -> completed
+    name='LangGraph'   node=None          -> completed
+
+The second is the graph's own final output and has **no node name at all**, so
+a reader keyed on the node would have worked by luck on the first and missed
+the second. Last one wins. Only the four known values are accepted, so a
+future node writing something else reads as "no reason observed" rather than
+reaching the front end as a status nobody defined.
+
+The one thing deliberately *not* done: the local UI does not display it. The
+field exists for the operator and for monitoring; the reader already sees the
+agent's apology in prose.
 
 
 **Fixed 17 August 2026** (each now has an eval case, so it stays fixed):

@@ -40,6 +40,66 @@ def collect_findings(
     return [*(existing or []), *incoming]
 
 
+# ============================================================
+# How a turn ended
+# ============================================================
+#
+# [claude] `make_domain_node` degraded a GraphRecursionError into a friendly
+# AIMessage and logged nothing, so an out-of-steps run was indistinguishable
+# from a real answer to anything watching. That was tolerable when a human
+# was reading a CLI trace and is not once a front end is attached: the
+# operator could not tell "the agent ran out of steps" from "the agent
+# answered", because both arrive as prose with a 200 beside it.
+#
+# Four values, and deliberately only four. Each one is decided by control
+# flow — an exception caught, a branch taken — never by reading the answer
+# text. Inferring "the agent refused" from prose is exactly the confident
+# guess this codebase keeps finding bugs in.
+
+COMPLETED = "completed"
+OUT_OF_STEPS = "out_of_steps"
+REFUSED = "refused"
+ERROR = "error"
+
+# Worst first. `resolve_stop_reason` walks this order, so a turn where one
+# specialist answered and the other died reports the death.
+STOP_REASONS = (ERROR, OUT_OF_STEPS, REFUSED, COMPLETED)
+
+
+def resolve_stop_reason(findings: list[dict[str, Any]] | None) -> str:
+    """
+    [claude] One reason for a turn that may have run two specialists.
+
+    Worst-wins, and that is the whole decision. A turn where the deals
+    specialist answered and the research specialist raised has produced half
+    an answer, and half an answer that reports itself as `completed` is the
+    recurring failure shape this project keeps finding — something that
+    looks whole and quietly dropped a piece. The operator should see
+    `error`; the reader still gets the half that worked, because
+    `synthesise` reports what it has.
+
+    `refused` is not sniffed out of the answer text. It is the structural
+    case: nothing came back with anything in it, so `synthesise` fell
+    through to the canned out-of-scope reply. An empty answer caused by an
+    exception is already labelled `error` by the node that caught it, and
+    ERROR precedes REFUSED above, so the two do not get confused.
+    """
+
+    collected = findings or []
+    reasons = {
+        str(finding.get("stop_reason") or COMPLETED) for finding in collected
+    }
+
+    for reason in (ERROR, OUT_OF_STEPS):
+        if reason in reasons:
+            return reason
+
+    if not any(str(finding.get("answer") or "").strip() for finding in collected):
+        return REFUSED
+
+    return COMPLETED
+
+
 class AgentState(TypedDict):
     messages: Annotated[list[AnyMessage], add_messages]
 
@@ -102,5 +162,29 @@ class AgentState(TypedDict):
     # reorder itself run to run.
     findings: Annotated[list[dict[str, Any]], collect_findings]
 
+    # [claude] How the turn ended — one of STOP_REASONS above.
+    #
+    # Written by exactly one node per graph, which is not a style choice.
+    # The specialists run in parallel, and two of them writing a plain
+    # channel in one superstep is what LangGraph raises `InvalidUpdateError`
+    # for — the same collision `findings` carries a reducer for. So a
+    # specialist records its own outcome *inside its finding*, where the
+    # reducer already handles the concurrency, and `synthesise` resolves the
+    # turn's single reason downstream. The single-domain graphs have one
+    # node and no such contention, so that node writes this directly.
+    #
+    # Optional, because absent is honest: a caller that did not go through
+    # a graph capable of setting it should read None rather than a
+    # confident `completed` nobody established.
+    stop_reason: NotRequired[str]
 
-__all__ = ["AgentState"]
+
+__all__ = [
+    "COMPLETED",  # [claude]
+    "ERROR",  # [claude]
+    "OUT_OF_STEPS",  # [claude]
+    "REFUSED",  # [claude]
+    "STOP_REASONS",  # [claude]
+    "AgentState",
+    "resolve_stop_reason",  # [claude]
+]

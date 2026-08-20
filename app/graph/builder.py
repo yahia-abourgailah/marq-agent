@@ -22,7 +22,13 @@ from app.graph.agents.domain import (
 from app.graph.agents.general import GENERAL_AGENT_SYSTEM_PROMPT
 from app.graph.agents.research import RESEARCH_AGENT_SYSTEM_PROMPT
 from app.graph.checkpointer import build_checkpointer
-from app.graph.state import AgentState
+from app.graph.state import (
+    COMPLETED,
+    ERROR,
+    OUT_OF_STEPS,
+    AgentState,
+    resolve_stop_reason,
+)
 from app.graph.supervisor import (
     FALLBACK_ROUTE,
     GENERAL_ROUTE,
@@ -133,16 +139,35 @@ def make_domain_node(
                 "specific."
             )
 
+            # [claude] The reason travels with the degraded answer, and this
+            # is the whole point of the field. Without it the line above is
+            # the only trace an out-of-steps run leaves: prose, with a 200
+            # beside it, indistinguishable from a real answer to the API and
+            # to anything watching the logs.
+            logger.warning(
+                "agent_out_of_steps",
+                extra={
+                    "specialist": domain.name,
+                    "step_limit": step_limit,
+                    "stop_reason": OUT_OF_STEPS,
+                },
+            )
+
             if collect:
                 return {
                     "findings": [
-                        {"specialist": domain.name, "answer": ran_out}
+                        {
+                            "specialist": domain.name,
+                            "answer": ran_out,
+                            "stop_reason": OUT_OF_STEPS,
+                        }
                     ]
                 }
 
             return {
                 "messages": [AIMessage(content=ran_out)],
                 "route": domain.name,
+                "stop_reason": OUT_OF_STEPS,
             }
 
         if collect:
@@ -165,12 +190,20 @@ def make_domain_node(
             # two specialists appending at once merge rather than collide.
             return {
                 "findings": [
-                    {"specialist": domain.name, "answer": str(answer or "")}
+                    {
+                        "specialist": domain.name,
+                        "answer": str(answer or ""),
+                        "stop_reason": COMPLETED,
+                    }
                 ],
                 "messages": list(produced[:-1]),
             }
 
-        return {"messages": result["messages"], "route": domain.name}
+        return {
+            "messages": result["messages"],
+            "route": domain.name,
+            "stop_reason": COMPLETED,
+        }
 
     return domain_agent_node
 
@@ -310,7 +343,19 @@ def build_supervisor_graph(checkpointer=None):
         #
         # `route` keeps holding the primary specialist, unchanged, so every
         # existing trace, eval and API response keeps working.
-        return {"plan": plan, "route": plan[0], "findings": None}
+        #
+        # [claude] `stop_reason: None` for the same reason as `findings`.
+        # It is checkpointed and last-write-wins, so turn two would carry
+        # turn one's `out_of_steps` until `synthesise` overwrote it. That
+        # overwrite happens on every path today, which makes this belt and
+        # braces — but the bug this guards against is one this graph has
+        # already shipped once, with findings, and it was invisible.
+        return {
+            "plan": plan,
+            "route": plan[0],
+            "findings": None,
+            "stop_reason": None,
+        }
 
     def _toolless_node(name: str, prompt: str, tools=None):
         """
@@ -331,6 +376,7 @@ def build_supervisor_graph(checkpointer=None):
 
         async def node(state: AgentState):
             trace: list = []
+            stop_reason = COMPLETED
 
             try:
                 if agent is None:
@@ -355,11 +401,28 @@ def build_supervisor_graph(checkpointer=None):
             except Exception:
                 # A failure in one specialist must not take the turn down —
                 # synthesise reports what it has.
-                logger.exception("specialist_failed", extra={"specialist": name})
+                #
+                # [claude] It must not vanish either. The empty answer below
+                # is indistinguishable from a specialist that simply had
+                # nothing to say, so the reason is recorded explicitly and
+                # `resolve_stop_reason` reports `error` rather than the
+                # `refused` an empty finding would otherwise imply.
+                stop_reason = ERROR
+
+                logger.exception(
+                    "specialist_failed",
+                    extra={"specialist": name, "stop_reason": ERROR},
+                )
                 answer = ""
 
             return {
-                "findings": [{"specialist": name, "answer": str(answer or "")}],
+                "findings": [
+                    {
+                        "specialist": name,
+                        "answer": str(answer or ""),
+                        "stop_reason": stop_reason,
+                    }
+                ],
                 "messages": trace,
             }
 
@@ -418,11 +481,22 @@ def build_supervisor_graph(checkpointer=None):
         )
         answered = [f for f in findings if f["answer"].strip()]
 
+        # [claude] The one place the turn's reason is decided, because this
+        # is the one node downstream of every specialist. Worst-wins — see
+        # resolve_stop_reason.
+        stop_reason = resolve_stop_reason(findings)
+
         if not answered:
-            return {"messages": [out_of_scope_message()]}
+            return {
+                "messages": [out_of_scope_message()],
+                "stop_reason": stop_reason,
+            }
 
         if len(answered) == 1:
-            return {"messages": [AIMessage(content=answered[0]["answer"])]}
+            return {
+                "messages": [AIMessage(content=answered[0]["answer"])],
+                "stop_reason": stop_reason,
+            }
 
         parts = "\n\n".join(
             f"--- from the {f['specialist']} specialist ---\n{f['answer']}"
@@ -437,12 +511,20 @@ def build_supervisor_graph(checkpointer=None):
                     SystemMessage(content=parts),
                 ]
             )
-            return {"messages": [merged]}
+            return {"messages": [merged], "stop_reason": stop_reason}
         except Exception:
-            logger.exception("synthesis_failed")
+            logger.exception("synthesis_failed", extra={"stop_reason": ERROR})
 
             # Better two labelled answers than none.
-            return {"messages": [AIMessage(content=parts)]}
+            #
+            # [claude] But the turn is still `error`, not whatever the
+            # specialists reported. The reader gets both halves; what they
+            # do not get is the merged answer that was asked for, and a
+            # monitor counting `completed` should not be told otherwise.
+            return {
+                "messages": [AIMessage(content=parts)],
+                "stop_reason": ERROR,
+            }
 
     graph.add_node("synthesise", synthesise)
 

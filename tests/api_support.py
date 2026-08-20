@@ -149,6 +149,12 @@ class StubGraph:
     # asserted through HTTP.
     chart: dict | None = None
 
+    # [claude] How the stubbed turn ended. Set it to `out_of_steps` to
+    # replay the case the reason exists for — an agent that hit its ceiling
+    # and apologised in prose, which is otherwise indistinguishable from an
+    # answer. `None` replays a graph that published no reason at all.
+    stop_reason: str | None = "completed"
+
     def _record_sql(self) -> None:
         if self.sql:
             provenance.record(
@@ -180,7 +186,12 @@ class StubGraph:
 
         self._record_sql()
 
-        return {"messages": self._messages(), "route": self.route}
+        result = {"messages": self._messages(), "route": self.route}
+
+        if self.stop_reason is not None:
+            result["stop_reason"] = self.stop_reason
+
+        return result
 
     async def astream_events(self, state, config=None, version=None):
         """
@@ -252,6 +263,17 @@ class StubGraph:
                 "name": "ChatOpenAI",
                 "metadata": {"langgraph_node": "model"},
                 **chunk(word + " "),
+            }
+
+        # [claude] The node that publishes how the turn ended, last, exactly
+        # as the real graph does — `synthesise` is the supervisor graph's
+        # finish point and the only node that writes the channel.
+        if self.stop_reason is not None:
+            yield {
+                "event": "on_chain_end",
+                "name": "synthesise",
+                "metadata": {"langgraph_node": "synthesise"},
+                "data": {"output": {"stop_reason": self.stop_reason}},
             }
 
 

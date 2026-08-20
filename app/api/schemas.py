@@ -143,6 +143,18 @@ class ChatResponse(BaseModel):
         ),
     )
 
+    stop_reason: str | None = Field(
+        default=None,
+        description=(
+            "How the turn ended: completed, out_of_steps, refused or error. "
+            "Exposed because an answer alone does not say. An agent that "
+            "runs out of steps replies with an apology in prose and a 200 "
+            "beside it, which is indistinguishable from a real answer to "
+            "anything reading the response — so `completed` is the only "
+            "value that means the reply can be trusted as an answer."
+        ),
+    )
+
 
 class ChartSeries(BaseModel):
     name: str
