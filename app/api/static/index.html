@@ -128,116 +128,176 @@ aside, main { position: relative; z-index: 1; }
    ================================================================== */
 /* [claude] Solid black, not glass.
  *
- * This panel was translucent for one commit and the gold wash bled
- * straight through it, lifting the brand's #0D0D0D to a muddy grey — the
- * single most recognisable thing in the identity, faded. Glass belongs on
- * the chrome and the cards, where something passes underneath; a brand
- * panel is not a place to spend transparency.
+ * This panel was translucent for one commit and the gold wash bled straight
+ * through it, lifting the brand's #0D0D0D to a muddy grey — the most
+ * recognisable thing in the identity, faded. Glass belongs where something
+ * passes underneath; a brand panel is not a place to spend transparency.
  *
- * The gradient is a touch of depth rather than translucency: black at the
- * top, a shade warmer at the foot, so the panel has life without lifting. */
+ * The gradient is depth rather than translucency: black at the top, a shade
+ * warmer at the foot, so the panel has life without lifting.
+ * ------------------------------------------------------------------
+ * The layout is a three-part column: fixed head (mark + primary action),
+ * a conversations list that takes all remaining height, and a foot holding
+ * files and identity. Conversations are the content; everything else is
+ * chrome, and chrome does not get to grow.
+ */
 aside {
-  background:
-    linear-gradient(178deg, #0D0D0D 0%, #121110 62%, #171412 100%);
+  background: linear-gradient(178deg, #0D0D0D 0%, #121110 62%, #171412 100%);
   color: var(--ivory);
-  display: flex; flex-direction: column; min-width: 0;
+  display: flex; flex-direction: column; min-width: 0; min-height: 0;
   border-radius: var(--r-lg);
   box-shadow: 0 2px 6px rgba(13,13,13,.10), 0 20px 50px -24px rgba(13,13,13,.42);
   overflow: hidden;
 }
 
-.brand { padding: 30px 26px 20px; text-align: center; }
-.brand .the {
-  font-size: 9px; letter-spacing: .42em; text-transform: uppercase;
-  color: var(--gold); margin-bottom: 6px;
-}
+/* ---- head ---- */
+.brand { padding: 26px 24px 18px; text-align: center; }
+.brand svg { display: block; margin: 0 auto 12px; }
 .brand .wordmark {
-  font-family: var(--display); font-size: 30px; letter-spacing: .1em;
-  line-height: 1; color: var(--ivory); margin-bottom: 8px;
+  font-family: var(--display); font-size: 25px; letter-spacing: .14em;
+  line-height: 1; color: var(--ivory); margin-bottom: 6px;
 }
 .brand .sub {
-  font-size: 8px; letter-spacing: .38em; text-transform: uppercase;
-  color: rgba(245,243,239,.55);
-}
-.rule-gold {
-  height: 1px; margin: 16px 26px;
-  background: linear-gradient(90deg, transparent, var(--gold), transparent);
-}
-.tagline {
-  text-align: center; font-size: 8px; letter-spacing: .34em;
-  text-transform: uppercase; color: var(--gold); padding-bottom: 4px;
+  font-size: 7.5px; letter-spacing: .4em; text-transform: uppercase;
+  color: rgba(245,243,239,.6);
 }
 
-.panel { padding: 18px 26px; }
-.panel + .panel { border-top: 1px solid rgba(245,243,239,.08); }
-.panel .label { color: rgba(245,243,239,.42); margin-bottom: 10px; display: block; }
-
-input, textarea, button, select { font-family: var(--body); font-size: 13px; color: inherit; }
-
-aside input[type=password], aside input[type=text] {
-  width: 100%; background: rgba(245,243,239,.06); color: var(--ivory);
-  border: 1px solid rgba(245,243,239,.14); border-radius: var(--r-sm);
-  padding: 9px 11px; letter-spacing: .02em; transition: all .18s ease;
+.lead-action { padding: 0 20px 18px; }
+.primary {
+  width: 100%; cursor: pointer; padding: 12px 14px; border-radius: var(--r);
+  background: rgba(203,164,110,.09); color: var(--gold);
+  border: 1px solid rgba(203,164,110,.34);
+  font-size: 11px; letter-spacing: .1em; font-weight: 500;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  transition: all .2s ease;
 }
-aside input:focus {
-  outline: none; border-color: var(--gold);
-  background: rgba(203,164,110,.09);
-  box-shadow: 0 0 0 3px rgba(203,164,110,.12);
-}
-.mono { font-family: var(--mono); font-size: 10.5px; }
-.hint-dark { color: rgba(245,243,239,.4); margin-top: 8px; }
+.primary span { font-size: 14px; line-height: 1; opacity: .9; }
+.primary:hover { background: var(--gold); color: var(--black); border-color: var(--gold); }
 
+/* ---- section heads: quieter than the old full-width labels ---- */
+.section-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 24px 8px;
+}
+.section-head .label {
+  font-size: 8.5px; letter-spacing: .24em; color: rgba(245,243,239,.56);
+}
+.section-head .count {
+  font-size: 9px; color: rgba(245,243,239,.5);
+  font-variant-numeric: tabular-nums;
+}
+.icon {
+  background: none; border: none; cursor: pointer; padding: 2px 4px;
+  color: rgba(245,243,239,.3); font-size: 13px; line-height: 1;
+  transition: all .18s ease; border-radius: var(--r-xs);
+}
+.icon:hover { color: var(--gold); transform: rotate(90deg); }
+
+/* ---- conversations take every spare pixel ---- */
+.threads { flex: 1 1 auto; overflow-y: auto; padding: 0 12px 12px; min-height: 60px; }
+.threads::-webkit-scrollbar, .log::-webkit-scrollbar { width: 7px; }
+.threads::-webkit-scrollbar-thumb { background: rgba(245,243,239,.12); border-radius: 4px; }
+.log::-webkit-scrollbar-thumb { background: rgba(27,26,24,.14); border-radius: 4px; }
+
+.thread {
+  padding: 10px 12px; cursor: pointer; display: flex; gap: 10px; align-items: center;
+  border-radius: var(--r-sm); margin-bottom: 2px;
+  border-left: 2px solid transparent; transition: all .16s ease;
+}
+.thread:hover { background: rgba(245,243,239,.05); }
+.thread.active { border-left-color: var(--gold); background: rgba(203,164,110,.1); }
+.thread .t {
+  flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 12.5px; color: rgba(245,243,239,.8);
+}
+.thread.active .t { color: var(--ivory); }
+.thread .n {
+  font-size: 9px; color: rgba(245,243,239,.5); letter-spacing: .06em;
+  font-variant-numeric: tabular-nums;
+}
+/* the delete affordance stays out of the way until the row is wanted */
+.thread .kill { opacity: 0; transition: all .16s ease; color: rgba(245,243,239,.3);
+                cursor: pointer; padding: 0 2px; line-height: 1; }
+.thread:hover .kill, .thread.active .kill { opacity: 1; }
+.thread .kill:hover { color: var(--gold); }
+.threads:empty::after {
+  content: "No conversations yet"; display: block; text-align: center;
+  padding: 18px 0; font-size: 11px; color: rgba(245,243,239,.22);
+}
+
+/* ---- files ---- */
+.files-block { flex: none; padding-top: 14px; border-top: 1px solid rgba(245,243,239,.07); }
 .drop {
-  border: 1px dashed rgba(203,164,110,.4); border-radius: var(--r);
-  padding: 16px 12px; text-align: center; cursor: pointer;
-  transition: all .2s ease; color: rgba(245,243,239,.6);
-  font-size: 11px; letter-spacing: .06em;
-  background: rgba(245,243,239,.02);
+  margin: 0 20px; border: 1px dashed rgba(203,164,110,.32); border-radius: var(--r);
+  padding: 14px 12px; text-align: center; cursor: pointer;
+  transition: all .2s ease; color: rgba(245,243,239,.5);
+  font-size: 11px; letter-spacing: .03em;
+  display: flex; flex-direction: column; align-items: center; gap: 7px;
+  background: rgba(245,243,239,.015);
 }
-.drop:hover, .drop.over {
-  border-color: var(--gold); background: rgba(203,164,110,.1);
-  color: var(--gold); transform: translateY(-1px);
+.drop em { font-style: normal; color: rgba(245,243,239,.32); }
+.drop:hover, .drop.over, .drop:focus-visible {
+  border-color: var(--gold); background: rgba(203,164,110,.08); color: var(--gold);
 }
-.drop svg { display: block; margin: 0 auto 8px; opacity: .8; }
+.drop:hover em, .drop.over em { color: rgba(203,164,110,.7); }
 
+#files { padding: 8px 20px 0; max-height: 132px; overflow-y: auto; }
 .file-row {
   display: flex; align-items: center; gap: 8px; padding: 8px 0;
-  border-bottom: 1px solid rgba(245,243,239,.07); font-size: 11.5px;
+  border-bottom: 1px solid rgba(245,243,239,.06); font-size: 11.5px;
 }
-.file-row .fn { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.file-row .meta { color: rgba(245,243,239,.4); font-size: 10px; letter-spacing: .04em; }
-.kill { cursor: pointer; color: rgba(245,243,239,.32); padding: 0 3px; line-height: 1;
+.file-row:last-child { border-bottom: none; }
+.file-row .fn { flex: 1; overflow: hidden; text-overflow: ellipsis;
+                white-space: nowrap; color: rgba(245,243,239,.78); }
+.file-row .meta { color: rgba(245,243,239,.52); font-size: 9.5px; letter-spacing: .04em;
+                  font-variant-numeric: tabular-nums; }
+.kill { cursor: pointer; color: rgba(245,243,239,.28); padding: 0 2px; line-height: 1;
         transition: color .16s ease; }
 .kill:hover { color: var(--gold); }
 
-.threads { flex: 1; overflow-y: auto; padding: 4px 12px 18px; min-height: 0; }
-.threads::-webkit-scrollbar, .log::-webkit-scrollbar { width: 7px; }
-.threads::-webkit-scrollbar-thumb { background: rgba(245,243,239,.13); border-radius: var(--r); }
-.log::-webkit-scrollbar-thumb { background: rgba(27,26,24,.14); border-radius: var(--r); }
-.thread {
-  padding: 10px 12px; cursor: pointer; display: flex; gap: 8px; align-items: baseline;
-  border-left: 2px solid transparent; border-radius: 0 var(--r-sm) var(--r-sm) 0;
-  transition: all .16s ease;
+/* ---- identity, not credentials ---- */
+.identity { flex: none; border-top: 1px solid rgba(245,243,239,.07); padding: 12px 14px 12px; }
+.who-btn {
+  width: 100%; display: flex; align-items: center; gap: 10px;
+  background: none; border: none; cursor: pointer; padding: 8px 10px;
+  border-radius: var(--r-sm); text-align: left; transition: background .16s ease;
 }
-.thread:hover { background: rgba(245,243,239,.05); }
-.thread.active { border-left-color: var(--gold); background: rgba(203,164,110,.11); }
-.thread .t {
-  flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-size: 12.5px; color: rgba(245,243,239,.86);
+.who-btn:hover { background: rgba(245,243,239,.05); }
+.avatar {
+  width: 28px; height: 28px; flex: none; border-radius: 50%;
+  display: grid; place-items: center;
+  background: rgba(203,164,110,.14); border: 1px solid rgba(203,164,110,.3);
+  color: var(--gold); font-size: 11px; font-weight: 600; letter-spacing: 0;
+  text-transform: uppercase;
 }
-.thread.active .t { color: var(--ivory); }
-.thread .n { font-size: 9.5px; color: rgba(245,243,239,.34); letter-spacing: .08em;
-             font-variant-numeric: tabular-nums; }
+.whoami { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.whoami .name {
+  font-size: 11.5px; color: rgba(245,243,239,.82);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.whoami .hint { font-size: 9px; letter-spacing: .1em; text-transform: uppercase;
+                color: rgba(245,243,239,.52); }
+.who-btn .chev { color: rgba(245,243,239,.28); font-size: 9px; transition: transform .2s ease; }
+.who-btn.open .chev { transform: rotate(90deg); }
 
-.btn-row { display: flex; gap: 8px; }
-.btn {
-  flex: 1; cursor: pointer; border-radius: var(--r-sm); padding: 10px 10px;
-  font-size: 9.5px; letter-spacing: .18em; text-transform: uppercase; font-weight: 500;
-  background: transparent; color: var(--gold);
-  border: 1px solid rgba(203,164,110,.38); transition: all .2s ease;
+.token-edit { display: none; padding: 6px 10px 2px; }
+.token-edit.open { display: block; animation: rise .24s ease forwards; }
+.token-edit input {
+  width: 100%; background: rgba(245,243,239,.05); color: var(--ivory);
+  border: 1px solid rgba(245,243,239,.13); border-radius: var(--r-sm);
+  padding: 9px 11px; font-size: 12px; transition: all .18s ease;
 }
-.btn:hover:not(:disabled) { background: var(--gold); color: var(--black); border-color: var(--gold); }
-.btn:disabled { opacity: .35; cursor: not-allowed; }
+.token-edit input:focus {
+  outline: none; border-color: var(--gold); background: rgba(203,164,110,.08);
+}
+.token-edit .mono {
+  display: block; margin-top: 7px; font-family: var(--mono); font-size: 9.5px;
+  color: rgba(245,243,239,.5); user-select: all;
+}
+.tagline {
+  text-align: center; font-size: 7.5px; letter-spacing: .34em;
+  text-transform: uppercase; color: var(--gold); padding: 10px 0 2px;
+}
 
 /* ==================================================================
    Main — frosted chrome, content scrolling beneath
@@ -562,47 +622,69 @@ textarea:focus {
 <body>
 
 <aside>
+  <!-- [claude] Restructured. The brand block used to take 380px before
+       anything functional, a raw password field sat in the most prominent
+       position, and the lower half was dead space. Now: mark, primary
+       action, conversations filling the height, files below, and identity
+       in the footer where setup belongs. -->
   <div class="brand">
-    <svg width="16" height="47" viewBox="0 0 34 100" fill="none" stroke="#CBA46E"
-         stroke-width="1.5" style="display:block;margin:0 auto 14px">
+    <svg width="15" height="44" viewBox="0 0 34 100" fill="none" stroke="#CBA46E"
+         stroke-width="1.6" aria-hidden="true">
       <path d="M17 1 C 24 26, 30 40, 33 50 C 30 60, 24 74, 17 99 C 10 74, 4 60, 1 50 C 4 40, 10 26, 17 1 Z"/>
       <path d="M17 1 L17 99"/><path d="M1 50 L33 50"/>
     </svg>
-    <div class="the">The</div>
     <div class="wordmark">MARQ</div>
     <div class="sub">Communities</div>
   </div>
-  <div class="rule-gold"></div>
-  <div class="tagline">Live Inspired</div>
 
-  <div class="panel" style="margin-top:8px">
-    <span class="label">Access token</span>
-    <input id="token" type="password" placeholder="Bearer token" autocomplete="off">
-    <div class="hint-dark mono">python scripts/dev_token.py mint</div>
+  <div class="lead-action">
+    <button class="primary" id="new">
+      <span aria-hidden="true">+</span> New conversation
+    </button>
   </div>
 
-  <div class="panel">
-    <span class="label">Workspace</span>
-    <div class="drop" id="drop">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.1">
-        <path d="M12 16V4m0 0L8 8m4-4 4 4"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/>
-      </svg>
-      Drop a file or click<br>
-      <span style="opacity:.6;font-size:10px">xlsx · csv · pdf</span>
-    </div>
-    <input id="file" type="file" accept=".xlsx,.xlsm,.csv,.tsv,.pdf" style="display:none">
-    <div id="files" style="margin-top:10px"></div>
+  <div class="section-head">
+    <span class="label">Conversations</span>
+    <button class="icon" id="refresh" title="Refresh" aria-label="Refresh">⟳</button>
   </div>
-
-  <div class="panel">
-    <div class="btn-row">
-      <button class="btn" id="new">New</button>
-      <button class="btn" id="refresh">Refresh</button>
-    </div>
-  </div>
-
-  <div class="panel" style="padding-bottom:6px"><span class="label">Conversations</span></div>
   <div class="threads" id="threads"></div>
+
+  <div class="files-block">
+    <div class="section-head">
+      <span class="label">Files</span>
+      <span class="count" id="fileCount"></span>
+    </div>
+    <div class="drop" id="drop" tabindex="0" role="button"
+         aria-label="Upload a file">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="1.2" aria-hidden="true">
+        <path d="M12 16V4m0 0L8 8m4-4 4 4"/>
+        <path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/>
+      </svg>
+      <span>Drop a file <em>or click</em></span>
+    </div>
+    <input id="file" type="file" accept=".xlsx,.xlsm,.csv,.tsv,.pdf" hidden>
+    <div id="files"></div>
+  </div>
+
+  <!-- Identity, not credentials. Who you are signed in as, with the token
+       behind a click — it is setup, used once, not a daily control. -->
+  <div class="identity">
+    <button class="who-btn" id="whoBtn">
+      <span class="avatar" id="avatar">—</span>
+      <span class="whoami">
+        <span class="name" id="whoName">Not signed in</span>
+        <span class="hint" id="whoHint">Add an access token</span>
+      </span>
+      <span class="chev" aria-hidden="true">▸</span>
+    </button>
+    <div class="token-edit" id="tokenEdit">
+      <input id="token" type="password" placeholder="Paste a bearer token"
+             autocomplete="off" aria-label="Access token">
+      <code class="mono">python scripts/dev_token.py mint</code>
+    </div>
+    <div class="tagline">Live Inspired</div>
+  </div>
 </aside>
 
 <main>
@@ -652,12 +734,64 @@ const SUGGESTIONS = [
 $("token").value = localStorage.getItem("marq_token") || "";
 $("token").addEventListener("change", () => {
   localStorage.setItem("marq_token", $("token").value.trim());
+  renderIdentity();
   refreshAll();
+  if ($("token").value.trim()) toggleToken(false);
 });
+
+function toggleToken(open) {
+  const panel = $("tokenEdit"), btn = $("whoBtn");
+  const next = open === undefined ? !panel.classList.contains("open") : open;
+  panel.classList.toggle("open", next);
+  btn.classList.toggle("open", next);
+  if (next) $("token").focus();
+}
+$("whoBtn").onclick = () => toggleToken();
 const auth = () => {
   const t = $("token").value.trim();
   return t ? { Authorization: "Bearer " + t } : {};
 };
+
+/* ------------------------------------------------------------------
+   Identity, read from the token.
+
+   [claude] A JWT payload is base64, not encrypted — the subject is right
+   there, so the sidebar can say who you are signed in as instead of
+   showing a password field forever. That is the difference between a
+   product and a config screen: credentials are setup, used once.
+
+   Decoding is for display only. Nothing here is trusted — the server
+   verifies the signature, and a tampered token simply fails there.
+   ------------------------------------------------------------------ */
+function tokenSubject(token) {
+  try {
+    const [, payload] = token.split(".");
+    const json = atob(payload.replace(/-/g, "+").replace(/_/g, "/"));
+    const claims = JSON.parse(json);
+    const exp = claims.exp ? new Date(claims.exp * 1000) : null;
+    return { subject: claims.sub || null, exp };
+  } catch { return { subject: null, exp: null }; }
+}
+
+function renderIdentity() {
+  const raw = $("token").value.trim();
+  const { subject, exp } = raw ? tokenSubject(raw) : { subject: null, exp: null };
+  const expired = exp && exp.getTime() < Date.now();
+
+  if (!subject) {
+    $("avatar").textContent = "—";
+    $("whoName").textContent = "Not signed in";
+    $("whoHint").textContent = "Add an access token";
+    return;
+  }
+
+  $("avatar").textContent = subject.trim()[0] || "?";
+  $("whoName").textContent = subject;
+  $("whoHint").textContent = expired
+    ? "Token expired"
+    : (exp ? "Valid to " + exp.toLocaleDateString(undefined,
+        { day: "numeric", month: "short" }) : "Signed in");
+}
 const hasToken = () => !!$("token").value.trim();
 
 /* ---------------- rendering ---------------- */
@@ -1391,10 +1525,10 @@ async function send(preset) {
 }
 
 function flashToken() {
-  const t = $("token");
-  t.style.borderColor = "#CBA46E";
-  t.focus();
-  setTimeout(() => (t.style.borderColor = ""), 1400);
+  // Open the drawer rather than flashing a field the user cannot see —
+  // the token lives in the footer now, collapsed by default.
+  toggleToken(true);
+  toast("Add an access token to begin", true);
 }
 
 /* ---------------- threads ---------------- */
@@ -1479,6 +1613,7 @@ async function loadFiles() {
     if (!r.ok) return;
     const files = (await r.json()).files;
     $("files").innerHTML = "";
+    $("fileCount").textContent = files.length ? String(files.length) : "";
     files.forEach(f => {
       const shape = f.sheets?.length ? f.sheets[0].row_count + " rows"
                   : (f.page_count ? f.page_count + " pp" : "");
@@ -1552,6 +1687,7 @@ $("input").addEventListener("input", e => {
 });
 
 mountSuggestions();
+renderIdentity();
 refreshAll();
 setInterval(health, 15000);
 </script>
