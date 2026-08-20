@@ -582,9 +582,13 @@ on disk.
 `/` by this API and built on The MarQ Communities brand — Playfair Display and
 Montserrat, the ivory/black split, gold rules, the Marquise diamond.
 
-One static file, no build step, no npm. Served by the API on purpose: that
-makes it same-origin, so it works with `CORS_ORIGINS` empty and cannot be
-broken by a missing entry — the one configuration gap left open.
+No build step and no npm. Served by the API on purpose: that makes it
+same-origin, so it works with `CORS_ORIGINS` empty and cannot be broken by a
+missing entry — the one configuration gap left open.
+
+It was one static file until 21 August 2026, when it reached 3,038 lines and
+the simplification stopped being one. Now three: `index.html` (162 lines of
+markup), `app.css`, `app.js` — still hand-written, still no toolchain.
 
 It streams over SSE, uploads by drag-and-drop, lists and replays
 conversations, and puts the `provenance` SQL one click under every answer,
@@ -598,7 +602,7 @@ the company website.
 
 ### The 21 August pass — motion, reach, and touch
 
-Still one file, still no build step. What changed:
+Still no build step. What changed:
 
 **Motion, vendored.** `static/vendor/motion.min.js` is Motion 13.1.1 — the
 library formerly published as Framer Motion — as its own UMD build, copied
@@ -693,6 +697,41 @@ scroll sideways.
 **Screen readers get state, not tokens.** `#announce` speaks "working on it",
 "answer ready", "stopped", "that failed". Piping a character-at-a-time stream
 into a live region would read the same sentence dozens of times.
+
+### Splitting the page — 21 August 2026
+
+`index.html` went from 3,038 lines to 162 of markup, with `app.css` and
+`app.js` beside it. Three things about how they are served are decisions
+rather than defaults:
+
+**Registered by name, not mounted.** `/app.css` and `/app.js` are two
+explicit routes. Mounting `static` would be the tidier-looking refactor and
+would also serve whatever anyone later drops in beside the page — and the
+things that get dropped next to a UI are exactly the ones that should not be
+public: a design export, a scratch copy, a `.env` somebody was comparing
+against. `test_the_assets_are_named_rather_than_mounted` plants such a file
+and asserts it stays unreachable; it was checked against a real directory
+mount, where it fails.
+
+**All three carry `no-store`.** They only make sense as a set — the page
+names the classes, the stylesheet styles them, the script queries them by id.
+Cache one and not the others and a browser holds a *mismatched* set, which
+does not present as a caching problem: it presents as a layout regression, or
+as controls that silently do nothing because the script is addressing markup
+that is no longer there. `motion.min.js` is the deliberate exception, being
+pinned and the only large file here.
+
+**`app.js` is a classic script at the end of `<body>`, and depends on it.**
+It reads `window.Motion` at the top level and queries the DOM at the top
+level, with no `DOMContentLoaded` guard. Giving it `type="module"` or
+`async` would break both. The file says so at the top.
+
+One thing the split nearly did quietly: `test_the_ui_needs_no_token_but_carries_no_data`
+scans the served UI for embedded credentials, and moving 1,900 lines out of
+the page did not fail it — it reduced it to scanning 162 lines of markup
+while the part where a token would actually get pasted stopped being checked.
+It reads all three files now. A test that keeps passing over less and less is
+worse than one that breaks, because nothing tells you it stopped working.
 
 The design guidance came from the `ui-ux-pro-max` skill, installed at
 `.claude/skills/ui-ux-pro-max` (searchable UX/style/colour data, its own

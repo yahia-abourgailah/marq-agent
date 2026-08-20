@@ -65,7 +65,10 @@ app/
     checkpointer.py    conversation persistence (PostgreSQL, or in-memory)
   api/
     app.py             create_app(), the lifespan, CORS, request ids
-    static/index.html  the local UI — one file, no build step
+    static/index.html  the local UI — markup
+    static/app.css     its stylesheet
+    static/app.js      its behaviour
+    static/vendor/     Motion 13.1.1 (MIT), vendored rather than from a CDN
     routes/            chat (JSON + SSE), threads, workspace, health
     streaming.py       graph run -> SSE events, and the token filter
     deps.py            request-scoped dependencies

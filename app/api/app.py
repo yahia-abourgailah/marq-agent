@@ -209,6 +209,42 @@ def create_app() -> FastAPI:
                 name="vendor",
             )
 
+        # [claude] The page's own stylesheet and script, split out of
+        # index.html on 21 August 2026 when it reached 3,000 lines.
+        #
+        # Registered by name rather than by mounting `static`, for the same
+        # reason `/vendor` is narrow: a directory mount here would serve
+        # whatever anyone later drops in beside the page, and the things
+        # people drop next to a UI are exactly the things that should not be
+        # public — a design export, a scratch copy, a `.env` someone was
+        # comparing against.
+        #
+        # `no-store` on all three, and that is the part worth keeping.
+        # These files only make sense as a set: the page names the CSS
+        # classes, the CSS styles them and the script queries them by id.
+        # Cache one and not the others and you get a *mismatched* set, which
+        # does not present as a caching problem — it presents as a layout
+        # regression, or as controls that silently do nothing because the
+        # script is addressing markup that is no longer there. That is a
+        # much worse hour than re-fetching 100 KB over localhost.
+        #
+        # The vendored library is the exception and is left cacheable: it is
+        # version-pinned in its filename's package, changes only when
+        # somebody re-vendors it, and is the only large file here.
+        def _serve(path: Path):
+            async def asset() -> FileResponse:
+                return FileResponse(path, headers={"Cache-Control": "no-store"})
+
+            return asset
+
+        for asset_name in ("app.css", "app.js"):
+            asset_path = static_dir / asset_name
+
+            if asset_path.is_file():
+                api.get(f"/{asset_name}", include_in_schema=False)(
+                    _serve(asset_path)
+                )
+
         if index.is_file():
 
             @api.get("/", include_in_schema=False)

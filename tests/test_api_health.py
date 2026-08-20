@@ -11,6 +11,7 @@ readiness reports what a dependency *can do*.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import pytest
 
@@ -322,8 +323,16 @@ async def test_the_ui_is_served_at_the_root(issuer):
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
     assert "MARQ" in response.text
-    # Talks to the real endpoints rather than a mock.
-    assert "/v1/chat/stream" in response.text
+
+    # [claude] The endpoint moved into app.js when the page was split, so
+    # this asserts it where it now lives rather than being deleted. It is
+    # the check that the UI talks to the real API rather than to a mock,
+    # which is worth keeping wherever the string ends up.
+    async with client(app) as http:
+        script = await http.get("/app.js")
+
+    assert script.status_code == 200
+    assert "/v1/chat/stream" in script.text
 
 
 @pytest.mark.asyncio
@@ -331,18 +340,28 @@ async def test_the_ui_needs_no_token_but_carries_no_data(issuer):
     """
     The page is static and holds no secrets — every request it makes still
     needs a verified token. Asserted so nobody later "helpfully" embeds one.
+
+    [claude] Scans all three files, not just the page.
+
+    Splitting the stylesheet and script out did not fail this test — it
+    quietly reduced it to scanning 162 lines of markup, while the ~1,900
+    lines where a token would actually be pasted stopped being checked at
+    all. A test that keeps passing over less and less is worse than one
+    that breaks, because nothing tells you it stopped working.
     """
 
     app, _ = build_app(verifier=issuer.verifier())
 
     async with client(app) as http:
-        response = await http.get("/")
+        served = {
+            path: (await http.get(path)).text
+            for path in ("/", "/app.css", "/app.js")
+        }
 
-    body = response.text
-
-    assert "Bearer ey" not in body
-    assert "BEGIN PRIVATE KEY" not in body
-    assert "postgres" not in body.lower()
+    for path, body in served.items():
+        assert "Bearer ey" not in body, f"a token is embedded in {path}"
+        assert "BEGIN PRIVATE KEY" not in body, f"key material in {path}"
+        assert "postgres" not in body.lower(), f"a DSN is in {path}"
 
 
 def test_the_ui_can_be_switched_off(issuer, monkeypatch):
@@ -439,3 +458,99 @@ async def test_the_ui_asks_for_nothing_off_this_host(issuer):
         assert "fonts.googleapis.com" in url or "fonts.gstatic.com" in url, (
             f"unexpected third-party request to {url}"
         )
+
+
+# ============================================================
+# The page and its assets are one set
+# ============================================================
+
+
+@pytest.mark.asyncio
+async def test_the_page_references_assets_that_actually_resolve(issuer):
+    """
+    [claude] The failure this catches is a rename.
+
+    Splitting the page into three files means a path can now be wrong. A
+    mistyped `href` does not raise anything: the API returns 200 for the
+    page, the browser 404s the stylesheet, and the console renders as
+    unstyled HTML — which reads as a CSS bug rather than a missing file.
+    """
+
+    app, _ = build_app(verifier=issuer.verifier())
+
+    async with client(app) as http:
+        page = (await http.get("/")).text
+
+        referenced = re.findall(
+            r'(?:href|src)=["\'](/[^"\']+)["\']', page
+        )
+
+        assert referenced, "the page should be pulling in its own assets"
+        assert "/app.css" in referenced
+        assert "/app.js" in referenced
+
+        for path in referenced:
+            assert (await http.get(path)).status_code == 200, (
+                f"the page references {path}, which does not resolve"
+            )
+
+
+@pytest.mark.asyncio
+async def test_the_page_and_its_assets_cache_together(issuer):
+    """
+    [claude] All three carry `no-store`, and this is the rule that keeps
+    the split honest.
+
+    They only make sense as a set: the page names the classes, the
+    stylesheet styles them, the script queries them by id. Cache one and
+    not the others and a browser can hold a *mismatched* set — which does
+    not present as a caching problem. It presents as a layout regression,
+    or as controls that silently do nothing because the script is
+    addressing markup that is no longer there.
+
+    The vendored library is deliberately not included: it is pinned, it
+    changes only when somebody re-vendors it, and it is the only large file
+    here.
+    """
+
+    app, _ = build_app(verifier=issuer.verifier())
+
+    async with client(app) as http:
+        for path in ("/", "/app.css", "/app.js"):
+            response = await http.get(path)
+
+            assert response.headers.get("cache-control") == "no-store", (
+                f"{path} may be cached independently of the rest of the set"
+            )
+
+
+@pytest.mark.asyncio
+async def test_the_assets_are_named_rather_than_mounted(issuer):
+    """
+    [claude] `/app.css` and `/app.js` are registered one by one, and a
+    directory mount over `static` would be the obvious "tidier" refactor.
+
+    It would also serve whatever anyone later drops in beside the page —
+    and the things that get dropped next to a UI are exactly the ones that
+    should not be public: a design export, a scratch copy, a `.env`
+    somebody was comparing against. This plants such a file and asserts it
+    stays unreachable.
+    """
+
+    from app.api import app as module
+
+    planted = Path(module.__file__).parent / "static" / "not-for-the-web.txt"
+    planted.write_text("PGPASSWORD=hunter2\n")
+
+    try:
+        app, _ = build_app(verifier=issuer.verifier())
+
+        async with client(app) as http:
+            response = await http.get("/not-for-the-web.txt")
+
+        assert response.status_code == 404, (
+            "static/ is being served as a directory; register UI assets by "
+            "name instead"
+        )
+    finally:
+        planted.unlink()

@@ -1,0 +1,1010 @@
+/* ==================================================================
+   The MarQ Communities — agent console, stylesheet
+
+   [claude] Split out of index.html on 21 August 2026. The page had grown
+   to 3,038 lines of markup, style and behaviour in one file, which is past
+   the point where "one file, no build step" is a simplification rather
+   than a place to lose things.
+
+   Still no build step: this is plain CSS, served by the API next to the
+   page, with the same `no-store` header. That last part is not incidental
+   — see the note on the asset routes in app/api/app.py. A cached
+   stylesheet against a fresh page is a worse bug than a stale page,
+   because it looks like a layout regression rather than a cache.
+   ================================================================== */
+
+/* ==================================================================
+   The MarQ Communities — agent console
+
+   Brand is fixed and comes first: Playfair Display and Montserrat, the
+   ivory/black split, gold on rules and accents, burgundy on the one
+   action. Glass fills gaps; it never replaces a brand decision.
+
+   Glass has a job here rather than a look. The header and composer are
+   frosted because content scrolls *beneath* them and legibility over
+   moving text is the whole reason the technique exists. Cards are
+   translucent so the page reads as layered rather than boxed. Answer text
+   sits on the bare ground, where contrast is highest — body copy never
+   rides a heavily transparent surface.
+
+   Glass also needs something worth blurring: two very low-opacity washes
+   sit under everything so the frost has colour to refract. On a flat
+   ground backdrop-filter is invisible.
+   ================================================================== */
+:root {
+  --black: #0D0D0D;
+  --ivory: #F5F3EF;
+  --burgundy: #5B0F1A;
+  --gold: #CBA46E;
+  --charcoal: #2A2A2A;
+
+  /* Neutrals biased warm toward the gold — a pure grey reads unconsidered
+     beside this palette. */
+  --ink: #1B1A18;
+  --ink-dim: #726B61;
+  --rule: rgba(27, 26, 24, .11);
+  --rule-strong: rgba(27, 26, 24, .18);
+
+  /* [claude] Gold as TEXT on a light ground.
+   *
+   * The brand gold is 2.09:1 on ivory — the same figure the palette
+   * validator flagged when I derived the chart colours. It is a fine rule,
+   * mark and accent, and unreadable as type. This is the deepest step that
+   * still reads as the same family and clears 4.5:1 (5.21).
+   *
+   * On black the brand gold is 8.4:1, so the sidebar keeps it unchanged. */
+  --gold-ink: #7D6220;
+
+  --gold-soft: rgba(203, 164, 110, .34);
+  --gold-faint: rgba(203, 164, 110, .13);
+
+  --glass: rgba(255, 255, 255, .66);
+  --glass-strong: rgba(255, 255, 255, .82);
+  --glass-dark: rgba(13, 13, 13, .84);
+  --blur: blur(18px) saturate(1.5);
+
+  --lift: 0 1px 2px rgba(27,26,24,.04), 0 8px 28px -12px rgba(27,26,24,.16);
+  --lift-lg: 0 2px 4px rgba(27,26,24,.05), 0 18px 48px -20px rgba(27,26,24,.24);
+
+  --display: "Playfair Display", Georgia, "Times New Roman", serif;
+  --body: "Montserrat", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* [claude] A radius scale rather than a scattering of 2s and 3s. The
+     brand is elegant rather than sharp, and near-square corners read as
+     unfinished at this weight of type. */
+  --r-xs: 6px;
+  --r-sm: 10px;
+  --r: 14px;
+  --r-lg: 20px;
+  --r-pill: 999px;
+
+  --header-h: 62px;
+  /* [claude] The composer is absolutely positioned so content scrolls
+     beneath its frosted bar; the log needs matching bottom room or the
+     last lines hide behind it. Measured, not guessed: 109px at rest, plus
+     air, plus what the textarea can grow by. */
+  --composer-h: 132px;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+
+body {
+  background: var(--ivory);
+  color: var(--ink);
+  font-family: var(--body);
+  font-size: 14px; line-height: 1.65; font-weight: 400;
+  /* [claude] Two rounded panels floating on the ambient ground, rather
+     than two regions butted against each other. The inset is what lets the
+     wash show around them — and what makes rounding read as deliberate
+     instead of as a corner that got clipped. */
+  display: grid; grid-template-columns: 300px 1fr; gap: 14px;
+  padding: 14px;
+  height: 100vh; overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The ambient ground. Fixed, behind everything, giving the glass colour
+   to refract — without it backdrop-filter has no visible effect. */
+body::before {
+  content: ""; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background:
+    radial-gradient(58vw 46vh at 12% -6%, rgba(203,164,110,.22), transparent 62%),
+    radial-gradient(52vw 52vh at 104% 108%, rgba(91,15,26,.13), transparent 60%),
+    radial-gradient(42vw 34vh at 78% 8%, rgba(203,164,110,.09), transparent 66%);
+}
+aside, main { position: relative; z-index: 1; }
+::selection { background: var(--gold-soft); }
+
+:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+  border-radius: var(--r-xs);
+}
+
+.label {
+  font-size: 10px; font-weight: 500; letter-spacing: .22em;
+  text-transform: uppercase; color: var(--ink-dim);
+}
+
+/* ==================================================================
+   Sidebar — deep glass over the wash
+   ================================================================== */
+/* [claude] Solid black, not glass.
+ *
+ * This panel was translucent for one commit and the gold wash bled straight
+ * through it, lifting the brand's #0D0D0D to a muddy grey — the most
+ * recognisable thing in the identity, faded. Glass belongs where something
+ * passes underneath; a brand panel is not a place to spend transparency.
+ *
+ * The gradient is depth rather than translucency: black at the top, a shade
+ * warmer at the foot, so the panel has life without lifting.
+ * ------------------------------------------------------------------
+ * The layout is a three-part column: fixed head (mark + primary action),
+ * a conversations list that takes all remaining height, and a foot holding
+ * files and identity. Conversations are the content; everything else is
+ * chrome, and chrome does not get to grow.
+ */
+aside {
+  background: linear-gradient(178deg, #0D0D0D 0%, #121110 62%, #171412 100%);
+  color: var(--ivory);
+  display: flex; flex-direction: column; min-width: 0; min-height: 0;
+  border-radius: var(--r-lg);
+  box-shadow: 0 2px 6px rgba(13,13,13,.10), 0 20px 50px -24px rgba(13,13,13,.42);
+  overflow: hidden;
+}
+
+/* ---- head ---- */
+.brand { padding: 26px 24px 18px; text-align: center; }
+.brand svg { display: block; margin: 0 auto 12px; }
+.brand .wordmark {
+  font-family: var(--display); font-size: 25px; letter-spacing: .14em;
+  line-height: 1; color: var(--ivory); margin-bottom: 6px;
+}
+.brand .sub {
+  font-size: 7.5px; letter-spacing: .4em; text-transform: uppercase;
+  color: rgba(245,243,239,.6);
+}
+
+.lead-action { padding: 0 20px 18px; }
+.primary {
+  width: 100%; cursor: pointer; padding: 12px 14px; border-radius: var(--r);
+  background: rgba(203,164,110,.09); color: var(--gold);
+  border: 1px solid rgba(203,164,110,.34);
+  font-size: 11px; letter-spacing: .1em; font-weight: 500;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  transition: all .2s ease;
+}
+.primary span { font-size: 14px; line-height: 1; opacity: .9; }
+.primary:hover { background: var(--gold); color: var(--black); border-color: var(--gold); }
+
+/* ---- section heads: quieter than the old full-width labels ---- */
+.section-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 24px 8px;
+}
+.section-head .label {
+  font-size: 8.5px; letter-spacing: .24em; color: rgba(245,243,239,.56);
+}
+.section-head .count {
+  font-size: 9px; color: rgba(245,243,239,.5);
+  font-variant-numeric: tabular-nums;
+}
+.icon {
+  background: none; border: none; cursor: pointer; padding: 2px 4px;
+  color: rgba(245,243,239,.3); font-size: 13px; line-height: 1;
+  transition: all .18s ease; border-radius: var(--r-xs);
+}
+.icon:hover { color: var(--gold); transform: rotate(90deg); }
+
+/* ---- conversations take every spare pixel ---- */
+.threads { flex: 1 1 auto; overflow-y: auto; padding: 0 12px 12px; min-height: 60px; }
+.threads::-webkit-scrollbar, .log::-webkit-scrollbar { width: 7px; }
+.threads::-webkit-scrollbar-thumb { background: rgba(245,243,239,.12); border-radius: 4px; }
+.log::-webkit-scrollbar-thumb { background: rgba(27,26,24,.14); border-radius: 4px; }
+
+.thread {
+  padding: 10px 12px; cursor: pointer; display: flex; gap: 10px; align-items: center;
+  border-radius: var(--r-sm); margin-bottom: 2px;
+  border-left: 2px solid transparent; transition: all .16s ease;
+}
+.thread:hover { background: rgba(245,243,239,.05); }
+.thread.active { border-left-color: var(--gold); background: rgba(203,164,110,.1); }
+.thread .t {
+  flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 12.5px; color: rgba(245,243,239,.8);
+}
+.thread.active .t { color: var(--ivory); }
+.thread .n {
+  font-size: 9px; color: rgba(245,243,239,.5); letter-spacing: .06em;
+  font-variant-numeric: tabular-nums;
+}
+/* the delete affordance stays out of the way until the row is wanted */
+.thread .kill { opacity: 0; transition: all .16s ease; color: rgba(245,243,239,.3);
+                cursor: pointer; padding: 0 2px; line-height: 1; }
+.thread:hover .kill, .thread.active .kill { opacity: 1; }
+.thread .kill:hover { color: var(--gold); }
+.threads:empty::after {
+  content: "No conversations yet"; display: block; text-align: center;
+  padding: 18px 0; font-size: 11px; color: rgba(245,243,239,.22);
+}
+
+/* ---- files ---- */
+.files-block { flex: none; padding-top: 14px; border-top: 1px solid rgba(245,243,239,.07); }
+.drop {
+  margin: 0 20px; border: 1px dashed rgba(203,164,110,.32); border-radius: var(--r);
+  padding: 14px 12px; text-align: center; cursor: pointer;
+  transition: all .2s ease; color: rgba(245,243,239,.5);
+  font-size: 11px; letter-spacing: .03em;
+  display: flex; flex-direction: column; align-items: center; gap: 7px;
+  background: rgba(245,243,239,.015);
+}
+.drop em { font-style: normal; color: rgba(245,243,239,.32); }
+.drop:hover, .drop.over, .drop:focus-visible {
+  border-color: var(--gold); background: rgba(203,164,110,.08); color: var(--gold);
+}
+.drop:hover em, .drop.over em { color: rgba(203,164,110,.7); }
+
+#files { padding: 8px 20px 0; max-height: 132px; overflow-y: auto; }
+.file-row {
+  display: flex; align-items: center; gap: 8px; padding: 8px 0;
+  border-bottom: 1px solid rgba(245,243,239,.06); font-size: 11.5px;
+}
+.file-row:last-child { border-bottom: none; }
+.file-row .fn { flex: 1; overflow: hidden; text-overflow: ellipsis;
+                white-space: nowrap; color: rgba(245,243,239,.78); }
+.file-row .meta { color: rgba(245,243,239,.52); font-size: 9.5px; letter-spacing: .04em;
+                  font-variant-numeric: tabular-nums; }
+.kill { cursor: pointer; color: rgba(245,243,239,.28); padding: 0 2px; line-height: 1;
+        transition: color .16s ease; }
+.kill:hover { color: var(--gold); }
+
+/* ---- identity, not credentials ---- */
+.identity { flex: none; border-top: 1px solid rgba(245,243,239,.07); padding: 12px 14px 12px; }
+.who-btn {
+  width: 100%; display: flex; align-items: center; gap: 10px;
+  background: none; border: none; cursor: pointer; padding: 8px 10px;
+  border-radius: var(--r-sm); text-align: left; transition: background .16s ease;
+}
+.who-btn:hover { background: rgba(245,243,239,.05); }
+.avatar {
+  width: 28px; height: 28px; flex: none; border-radius: 50%;
+  display: grid; place-items: center;
+  background: rgba(203,164,110,.14); border: 1px solid rgba(203,164,110,.3);
+  color: var(--gold); font-size: 11px; font-weight: 600; letter-spacing: 0;
+  text-transform: uppercase;
+}
+.whoami { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.whoami .name {
+  font-size: 11.5px; color: rgba(245,243,239,.82);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.whoami .hint { font-size: 9px; letter-spacing: .1em; text-transform: uppercase;
+                color: rgba(245,243,239,.52); }
+.who-btn .chev { color: rgba(245,243,239,.28); font-size: 9px; transition: transform .2s ease; }
+.who-btn.open .chev { transform: rotate(90deg); }
+
+.token-edit { display: none; padding: 6px 10px 2px; }
+.token-edit.open { display: block; animation: rise .24s ease forwards; }
+.token-edit input {
+  width: 100%; background: rgba(245,243,239,.05); color: var(--ivory);
+  border: 1px solid rgba(245,243,239,.13); border-radius: var(--r-sm);
+  padding: 9px 11px; font-size: 12px; transition: all .18s ease;
+}
+.token-edit input:focus {
+  outline: none; border-color: var(--gold); background: rgba(203,164,110,.08);
+}
+.token-edit .mono {
+  display: block; margin-top: 7px; font-family: var(--mono); font-size: 9.5px;
+  color: rgba(245,243,239,.5); user-select: all;
+}
+.tagline {
+  text-align: center; font-size: 7.5px; letter-spacing: .34em;
+  text-transform: uppercase; color: var(--gold); padding: 10px 0 2px;
+}
+
+/* ==================================================================
+   Main — frosted chrome, content scrolling beneath
+   ================================================================== */
+main {
+  display: flex; flex-direction: column; min-width: 0; min-height: 0;
+  border-radius: var(--r-lg); overflow: hidden;
+  background: rgba(255,255,255,.34);
+  border: 1px solid rgba(255,255,255,.5);
+  box-shadow: 0 2px 6px rgba(27,26,24,.04), 0 20px 56px -26px rgba(27,26,24,.20);
+}
+@supports (backdrop-filter: blur(1px)) {
+  main { -webkit-backdrop-filter: blur(20px) saturate(1.4);
+         backdrop-filter: blur(20px) saturate(1.4); }
+}
+
+header.bar {
+  position: absolute; top: 0; left: 0; right: 0; z-index: 6;
+  height: var(--header-h); padding: 0 40px;
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--glass); border-bottom: 1px solid var(--rule);
+}
+header.bar .title { font-family: var(--display); font-size: 17px; letter-spacing: .04em; }
+
+.status {
+  display: flex; align-items: center; gap: 8px; cursor: default;
+  padding: 5px 12px; border-radius: var(--r-pill);
+  background: var(--glass-strong); border: 1px solid var(--rule);
+}
+.dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-dim); flex: none; }
+.dot.ok { background: #2F7D5B; box-shadow: 0 0 0 3px rgba(47,125,91,.16); }
+.dot.bad { background: var(--burgundy); box-shadow: 0 0 0 3px rgba(91,15,26,.14); }
+
+.log { flex: 1; overflow-y: auto;
+       padding: calc(var(--header-h) + 34px) 40px var(--composer-h); }
+.wrap { max-width: 720px; margin: 0 auto; }
+
+.composer {
+  position: absolute; bottom: 0; left: 0; right: 0; z-index: 6;
+  border-top: 1px solid var(--rule); padding: 16px 40px 18px;
+  background: var(--glass);
+  border-radius: 0 0 var(--r-lg) var(--r-lg);
+}
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+  header.bar, .composer {
+    background: rgba(245,243,239,.62);
+    -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
+  }
+  .status { background: rgba(255,255,255,.5);
+            -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
+}
+.composer .wrap { display: flex; gap: 12px; align-items: flex-end; }
+textarea {
+  flex: 1; resize: none; max-height: 170px;
+  background: var(--glass-strong); border: 1px solid var(--rule-strong);
+  padding: 13px 16px; font-size: 14px; line-height: 1.6; border-radius: var(--r);
+  transition: all .18s ease;
+}
+textarea:focus {
+  outline: none; border-color: var(--gold); background: #fff;
+  box-shadow: 0 0 0 3px rgba(203,164,110,.16);
+}
+.send {
+  flex: none; width: 112px; padding: 12px 0; cursor: pointer; border: none;
+  background: var(--burgundy); color: var(--gold); border-radius: var(--r);
+  font-size: 9.5px; letter-spacing: .2em; text-transform: uppercase; font-weight: 600;
+  transition: all .2s ease; box-shadow: var(--lift);
+}
+.send:hover:not(:disabled) { background: var(--black); transform: translateY(-1px);
+                             box-shadow: var(--lift-lg); }
+.send:disabled { opacity: .4; cursor: not-allowed; box-shadow: none; }
+.foot { text-align: center; margin-top: 9px; font-size: 10px;
+        color: var(--ink-dim); letter-spacing: .06em; }
+
+/* ==================================================================
+   Conversation
+   ================================================================== */
+/* [claude] The entrance moved from a keyframe to a spring — see the
+   Motion note in the script. A cubic-bezier arrives at a constant, slightly
+   mechanical stop; a spring settles, which at this size reads as the
+   message having weight rather than having been faded in. The CSS keeps no
+   animation of its own so the two cannot both run, and a message is fully
+   visible with no library present at all. */
+.msg { margin-bottom: 32px; }
+
+.who { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+.who .name {
+  font-size: 9.5px; letter-spacing: .24em; text-transform: uppercase;
+  color: var(--ink-dim); font-weight: 500;
+}
+.msg.user .bubble {
+  background: var(--glass-strong); border: 1px solid var(--rule);
+  border-left: 2px solid var(--gold); border-radius: 0 var(--r) var(--r) 0;
+  padding: 15px 19px; white-space: pre-wrap; word-wrap: break-word;
+  box-shadow: var(--lift);
+}
+@supports (backdrop-filter: blur(1px)) {
+  .msg.user .bubble { background: rgba(255,255,255,.6);
+                      -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+}
+/* Answer text sits on the ground, not on glass — highest contrast where
+   the most reading happens. */
+.msg.agent .bubble {
+  white-space: normal; word-wrap: break-word;
+  font-size: 14.5px; line-height: 1.82; color: #23211E;
+}
+.msg.agent .bubble p { margin: 0 0 10px; }
+.msg.agent .bubble p:last-child { margin-bottom: 0; }
+.msg.agent .bubble strong { font-weight: 600; color: var(--black); }
+.msg.agent .bubble em { font-style: italic; color: var(--charcoal); }
+.msg.agent .bubble code {
+  font-family: var(--mono); font-size: 12.5px; background: var(--gold-faint);
+  border: 1px solid var(--gold-soft); padding: 1px 5px; border-radius: var(--r-sm);
+}
+.msg.agent .bubble h4 {
+  font-family: var(--display); font-size: 15px; font-weight: 500;
+  letter-spacing: .03em; margin: 16px 0 8px; text-wrap: balance;
+}
+.msg.agent .bubble ul { margin: 4px 0 12px; padding-left: 0; list-style: none; }
+.msg.agent .bubble li { position: relative; padding-left: 20px; margin-bottom: 5px; }
+.msg.agent .bubble li::before {
+  content: "◇"; position: absolute; left: 2px; top: 0;
+  color: var(--gold-ink); font-size: 10px; line-height: 1.9;
+}
+
+/* while the agent works */
+.stage {
+  display: flex; align-items: center; gap: 10px; padding: 2px 0 6px;
+  font-size: 11.5px; letter-spacing: .1em; color: var(--ink-dim);
+}
+.stage .orb { width: 8px; height: 8px; flex: none; position: relative; }
+.stage .orb::before, .stage .orb::after {
+  content: ""; position: absolute; inset: 0; border-radius: 50%; background: var(--gold);
+}
+.stage .orb::after { animation: pulse 1.6s ease-out infinite; }
+@keyframes pulse { 0% { transform: scale(1); opacity: .65 } 100% { transform: scale(2.8); opacity: 0 } }
+.stage .elapsed { margin-left: auto; opacity: .45; font-size: 10.5px;
+                  font-variant-numeric: tabular-nums; }
+.stage.gone { display: none; }
+
+.caret {
+  display: inline-block; width: 2px; height: 1.05em; background: var(--gold);
+  vertical-align: -.16em; margin-left: 1px; animation: blink 1.05s steps(2) infinite;
+}
+@keyframes blink { 0%,50% { opacity: 1 } 50.1%,100% { opacity: 0 } }
+
+/* ==================================================================
+   After the answer — copy, and the machinery behind a control
+   ================================================================== */
+/* [claude] The entrance is Motion's now, so the CSS no longer starts this
+   at `opacity: 0` — with both running, the two fought over the same
+   property and the bar flickered. `rise` stays because the details panel
+   and the token drawer still use it. */
+.after { display: flex; align-items: center; gap: 16px; margin-top: 12px; }
+@keyframes rise { from { opacity: 0 } to { opacity: 1 } }
+.after button {
+  background: none; border: none; padding: 0; cursor: pointer;
+  font-family: var(--body); font-size: 10px; letter-spacing: .16em;
+  text-transform: uppercase; color: var(--ink-dim);
+  display: flex; align-items: center; gap: 6px; transition: color .16s ease;
+}
+.after button:hover { color: var(--burgundy); }
+.after .gem { color: var(--gold-ink); font-size: 9px; transition: transform .22s ease; }
+.after button.open .gem { transform: rotate(90deg); }
+
+.details { margin-top: 12px; border-left: 2px solid var(--gold-soft);
+           padding-left: 16px; display: none; }
+.details.open { display: block; animation: rise .26s ease forwards; }
+.details .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+.details .cap { font-size: 9.5px; letter-spacing: .18em; text-transform: uppercase;
+                color: var(--ink-dim); margin-right: 4px; }
+
+.pill {
+  font-size: 9.5px; letter-spacing: .12em; text-transform: uppercase;
+  padding: 3px 10px; border: 1px solid var(--rule); color: var(--ink-dim);
+  border-radius: var(--r-pill); background: var(--glass-strong);
+}
+.pill.who { color: var(--burgundy); border-color: rgba(91,15,26,.24); }
+.pill.tool { color: #8A6D3F; border-color: var(--gold-soft); background: var(--gold-faint); }
+
+.q { margin-bottom: 14px; }
+.q .qh { font-size: 9.5px; letter-spacing: .18em; text-transform: uppercase;
+         color: var(--ink-dim); margin-bottom: 6px; }
+.q pre {
+  margin: 0; padding: 15px 17px; background: var(--black); color: #D9D4C9;
+  overflow-x: auto; border-radius: var(--r); box-shadow: var(--lift);
+  font: 11.5px/1.7 var(--mono);
+}
+.q pre .kw { color: var(--gold); }
+.q .meta { margin-top: 5px; font-size: 10.5px; color: var(--ink-dim); letter-spacing: .04em; }
+.q .meta.warn { color: var(--burgundy); }
+.q .declined { padding: 11px 15px; background: var(--glass-strong); border-radius: var(--r);
+               border: 1px solid var(--rule); font-size: 12.5px; color: var(--ink-dim); }
+
+.err {
+  border: 1px solid rgba(91,15,26,.28); border-left: 2px solid var(--burgundy);
+  background: rgba(91,15,26,.05); padding: 14px 18px; color: var(--burgundy);
+  border-radius: 0 var(--r) var(--r) 0;
+}
+
+/* ==================================================================
+   Empty state
+   ================================================================== */
+.empty { text-align: center; padding-top: 6vh; }
+.empty .mark { margin: 0 auto 26px; display: block; }
+.empty .big {
+  font-family: var(--display); font-size: 28px; letter-spacing: .05em;
+  color: var(--ink); margin-bottom: 12px; text-wrap: balance;
+}
+.empty .lead {
+  font-size: 9px; letter-spacing: .38em; text-transform: uppercase;
+  color: var(--gold-ink); margin-bottom: 30px;
+}
+.suggest { display: grid; gap: 9px; max-width: 440px; margin: 0 auto; }
+.suggest button {
+  background: var(--glass); border: 1px solid var(--rule); padding: 14px 18px;
+  cursor: pointer; text-align: left; font-size: 13px; color: var(--ink);
+  border-radius: var(--r); transition: all .2s ease; box-shadow: var(--lift);
+}
+.suggest button:hover {
+  border-color: var(--gold-soft); background: var(--glass-strong);
+  transform: translateY(-2px); box-shadow: var(--lift-lg);
+}
+@supports (backdrop-filter: blur(1px)) {
+  .suggest button { -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); }
+}
+
+/* ==================================================================
+   Charts
+
+   Palette computed, not chosen: the raw brand colours fail the lightness
+   band, the chroma floor and 3:1 contrast. These are brand-faithful steps
+   that pass all five checks on both surfaces.
+   ================================================================== */
+.chart {
+  margin: 18px 0 6px; background: var(--glass-strong);
+  border: 1px solid var(--rule); border-radius: var(--r-lg);
+  padding: 20px 20px 14px; box-shadow: var(--lift);
+}
+@supports (backdrop-filter: blur(1px)) {
+  .chart { background: rgba(255,255,255,.72);
+           -webkit-backdrop-filter: blur(14px) saturate(1.3);
+           backdrop-filter: blur(14px) saturate(1.3); }
+}
+.chart h5 { margin: 0 0 2px; font-family: var(--display); font-size: 15.5px;
+            font-weight: 500; letter-spacing: .02em; color: var(--ink); }
+.chart .sub { font-size: 10px; letter-spacing: .16em; text-transform: uppercase;
+              color: var(--ink-dim); margin-bottom: 14px; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chart .axis { stroke: var(--rule-strong); stroke-width: 1; }
+.chart .tick { fill: var(--ink-dim); font-size: 10px; letter-spacing: .04em;
+               font-variant-numeric: tabular-nums; }
+.chart .cat { fill: var(--ink-dim); font-size: 10.5px; }
+.chart .val { fill: var(--ink); font-size: 10.5px; font-weight: 500;
+              font-variant-numeric: tabular-nums; }
+.chart .legend { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 12px; }
+.chart .legend span { display: flex; align-items: center; gap: 7px;
+                      font-size: 10.5px; color: var(--ink-dim); }
+.chart .legend i { width: 10px; height: 10px; border-radius: var(--r-xs); display: block; }
+.chart .foot { display: flex; justify-content: flex-end; margin-top: 10px; }
+.chart .foot button {
+  background: none; border: none; cursor: pointer; padding: 0;
+  font-family: var(--body); font-size: 9.5px; letter-spacing: .16em;
+  text-transform: uppercase; color: var(--ink-dim); transition: color .16s ease;
+}
+.chart .foot button:hover { color: var(--burgundy); }
+/* [claude] The table scrolls inside its own box at every width. A long
+   category name made the table wider than the column, and without this the
+   *page* scrolled sideways to fit it — breaking the whole layout to show
+   one table. */
+.chart .scroll-x { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.chart table { width: 100%; border-collapse: collapse; margin-top: 10px; display: none;
+               min-width: 260px; }
+.chart table.open { display: table; }
+.chart th, .chart td { text-align: left; padding: 6px 8px;
+  border-bottom: 1px solid var(--rule); font-size: 11.5px; }
+.chart th { font-size: 9.5px; letter-spacing: .14em; text-transform: uppercase;
+            color: var(--ink-dim); font-weight: 500; }
+.chart td.n { text-align: right; font-variant-numeric: tabular-nums; }
+.chart .hit { fill: transparent; cursor: pointer; }
+.chart .rel { position: relative; }
+.chart .tip {
+  position: absolute; pointer-events: none; background: rgba(13,13,13,.92);
+  color: var(--ivory); padding: 7px 11px; font-size: 11.5px; border-radius: var(--r-sm);
+  white-space: nowrap; opacity: 0; transition: opacity .12s ease; z-index: 30;
+  border-left: 2px solid var(--gold); transform: translate(-50%, -120%);
+  box-shadow: var(--lift-lg);
+}
+@supports (backdrop-filter: blur(1px)) {
+  .chart .tip { -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+}
+.chart .tip.show { opacity: 1; }
+
+/* ==================================================================
+   Toast
+   ================================================================== */
+.toast {
+  position: fixed; bottom: 26px; left: 50%;
+  transform: translateX(-50%) translateY(12px);
+  background: rgba(13,13,13,.9); color: var(--ivory); padding: 14px 22px;
+  font-size: 12.5px; border-radius: var(--r-pill); z-index: 50; opacity: 0;
+  transition: all .3s cubic-bezier(.22,.8,.3,1); max-width: 520px;
+  pointer-events: none; border-left: 2px solid var(--gold);
+  box-shadow: var(--lift-lg);
+}
+@supports (backdrop-filter: blur(1px)) {
+  .toast { -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.toast.bad { border-left-color: var(--burgundy); }
+
+.spin { display: inline-block; animation: sp 1.1s linear infinite; color: var(--gold); }
+@keyframes sp { to { transform: rotate(360deg); } }
+
+
+/* ==================================================================
+   Menu button, drawer scrim — the small-screen chrome
+
+   [claude] Below 900px the sidebar used to be `display: none`, which did
+   not make the app responsive so much as amputate it: conversations,
+   files and the identity panel simply ceased to exist, and there was no
+   control anywhere that could bring them back. A phone user could send a
+   message and nothing else.
+
+   It is a drawer now. Same panel, same markup, same brand — moved off
+   canvas and given a way back.
+   ================================================================== */
+.menu-btn {
+  display: none; flex: none; align-items: center; justify-content: center;
+  width: 34px; height: 34px; margin-right: 2px;
+  background: var(--glass-strong); border: 1px solid var(--rule);
+  border-radius: var(--r-sm); cursor: pointer; color: var(--ink);
+  transition: background .16s ease, border-color .16s ease;
+}
+.menu-btn:hover { border-color: var(--gold-soft); background: #fff; }
+.bar-left { display: flex; align-items: center; gap: 12px; min-width: 0; }
+
+.scrim {
+  position: fixed; inset: 0; z-index: 39; background: rgba(13,13,13,.44);
+  opacity: 0; pointer-events: none;
+}
+/* [claude] `opacity: 1` here, not only in the animation.
+   *
+   * The helper's whole contract is that an animation runs *to* the
+   * element's natural resting state, so that a missing library means
+   * "already there" rather than "invisible". The scrim broke that: CSS
+   * declared only `opacity: 0`, so the Web Animations fill reverted to it
+   * the instant the tween finished and the scrim never showed at all. */
+.scrim.open { pointer-events: auto; opacity: 1; }
+@supports (backdrop-filter: blur(1px)) {
+  .scrim { -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px); }
+}
+
+/* ==================================================================
+   Jump to latest
+
+   [claude] Autoscroll used to be unconditional: every token painted
+   called scrollDown(), so scrolling up to re-read an earlier answer while
+   the agent was still writing yanked you back to the bottom on the next
+   frame. Reading the conversation during a turn was impossible.
+
+   Now scrolling up detaches, and this is how you get back. It only
+   appears when you are actually detached, so it costs nothing in the
+   common case.
+   ================================================================== */
+.jump {
+  position: absolute; left: 50%; bottom: calc(var(--composer-h) + 8px);
+  z-index: 7; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 7px;
+  padding: 8px 16px; border-radius: var(--r-pill); cursor: pointer;
+  background: var(--glass-strong); border: 1px solid var(--rule-strong);
+  color: var(--ink); font-family: var(--body);
+  font-size: 10px; letter-spacing: .16em; text-transform: uppercase;
+  box-shadow: var(--lift-lg); opacity: 0; pointer-events: none;
+}
+.jump.show { pointer-events: auto; opacity: 1; }
+.jump:hover { border-color: var(--gold); }
+@supports (backdrop-filter: blur(1px)) {
+  .jump { background: rgba(255,255,255,.8);
+          -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); }
+}
+
+/* ==================================================================
+   Command palette
+
+   [claude] Every action in this console lived in exactly one place on
+   screen, and three of them lived in a sidebar that small screens could
+   not reach. A palette gives all of them one keyboard address (⌘K), which
+   is also the only way to make a drawer-based layout genuinely usable
+   without a pointer.
+   ================================================================== */
+.palette-wrap {
+  position: fixed; inset: 0; z-index: 60; display: none;
+  align-items: flex-start; justify-content: center; padding: 12vh 20px 20px;
+  background: rgba(13,13,13,.34);
+}
+.palette-wrap.open { display: flex; }
+@supports (backdrop-filter: blur(1px)) {
+  .palette-wrap { -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
+}
+.palette {
+  width: 100%; max-width: 560px; max-height: 62vh;
+  display: flex; flex-direction: column; overflow: hidden;
+  background: rgba(245,243,239,.94); border: 1px solid var(--rule-strong);
+  border-radius: var(--r-lg); box-shadow: var(--lift-lg);
+}
+@supports (backdrop-filter: blur(1px)) {
+  .palette { background: rgba(245,243,239,.86);
+             -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); }
+}
+.palette-head { display: flex; align-items: center; gap: 10px;
+                padding: 15px 18px; border-bottom: 1px solid var(--rule); }
+.palette-head .gem { color: var(--gold-ink); font-size: 11px; flex: none; }
+.palette input {
+  flex: 1; border: none; background: none; outline: none;
+  font-family: var(--body); font-size: 15px; color: var(--ink);
+}
+.palette input::placeholder { color: var(--ink-dim); }
+.palette .esc {
+  flex: none; font-size: 9px; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--ink-dim); border: 1px solid var(--rule);
+  border-radius: var(--r-xs); padding: 3px 7px;
+}
+.palette-list { overflow-y: auto; padding: 8px; min-height: 0; }
+.palette-group {
+  font-size: 8.5px; letter-spacing: .24em; text-transform: uppercase;
+  color: var(--ink-dim); padding: 10px 12px 5px;
+}
+.palette-item {
+  display: flex; align-items: center; gap: 11px; width: 100%;
+  padding: 10px 12px; border: none; background: none; cursor: pointer;
+  border-radius: var(--r-sm); text-align: left; font-family: var(--body);
+  font-size: 13.5px; color: var(--ink); border-left: 2px solid transparent;
+}
+.palette-item .pi-mark { color: var(--gold-ink); font-size: 10px; flex: none; }
+.palette-item .pi-text { flex: 1; min-width: 0; overflow: hidden;
+                         text-overflow: ellipsis; white-space: nowrap; }
+.palette-item .pi-key {
+  flex: none; font-size: 9.5px; letter-spacing: .1em; color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+}
+.palette-item[aria-selected="true"] {
+  background: var(--gold-faint); border-left-color: var(--gold);
+}
+.palette-empty { padding: 26px 12px; text-align: center;
+                 font-size: 12.5px; color: var(--ink-dim); }
+
+/* ==================================================================
+   Message actions, and stopping a turn
+   ================================================================== */
+.after button:disabled { opacity: .4; cursor: not-allowed; }
+.after .sep { width: 1px; height: 11px; background: var(--rule-strong); flex: none; }
+
+.msg .edit-box { display: flex; flex-direction: column; gap: 9px; }
+.msg .edit-box textarea {
+  background: #fff; border: 1px solid var(--gold); border-radius: var(--r);
+  box-shadow: 0 0 0 3px rgba(203,164,110,.16);
+  padding: 13px 16px; font: 400 14px/1.6 var(--body); color: var(--ink);
+  resize: none; max-height: 240px;
+}
+.msg .edit-box textarea:focus { outline: none; }
+.msg .edit-actions { display: flex; gap: 10px; justify-content: flex-end; }
+.msg .edit-actions button {
+  cursor: pointer; font-family: var(--body); font-size: 9.5px;
+  letter-spacing: .16em; text-transform: uppercase; padding: 7px 14px;
+  border-radius: var(--r-sm); transition: all .18s ease;
+}
+.msg .edit-actions .ok { border: none; background: var(--burgundy); color: var(--gold); }
+.msg .edit-actions .ok:hover { background: var(--black); }
+.msg .edit-actions .no { background: none; border: 1px solid var(--rule-strong);
+                         color: var(--ink-dim); }
+.msg .edit-actions .no:hover { border-color: var(--ink-dim); color: var(--ink); }
+
+.send.stopping { background: var(--charcoal); color: var(--ivory); }
+.send.stopping:hover:not(:disabled) { background: var(--burgundy); color: var(--gold); }
+
+/* ==================================================================
+   Skeletons — reserved space, not a spinner
+
+   [claude] The sidebar lists rendered as nothing until their fetch
+   resolved, so a cold load showed an empty panel that was
+   indistinguishable from "you have no conversations". These hold the
+   shape instead, which is also what keeps the layout from jumping when
+   the rows arrive.
+   ================================================================== */
+.skel { padding: 10px 12px; display: flex; flex-direction: column; gap: 12px; }
+.skel i {
+  display: block; height: 11px; border-radius: var(--r-xs);
+  background: linear-gradient(90deg,
+    rgba(245,243,239,.05) 0%, rgba(245,243,239,.11) 50%, rgba(245,243,239,.05) 100%);
+  background-size: 200% 100%; animation: shim 1.4s ease-in-out infinite;
+}
+.skel i:nth-child(2) { width: 74%; }
+.skel i:nth-child(3) { width: 58%; }
+@keyframes shim { to { background-position: -200% 0 } }
+
+/* ==================================================================
+   Charts — accessible beyond colour
+
+   [claude] The palette was already computed to clear 3:1 against both
+   surfaces, but every series was still identified *only* by its colour,
+   which is the one channel a colour-blind reader does not have. Each
+   series now also carries a hatch, and the table under every chart is
+   reachable by keyboard rather than by hovering a mark.
+   ================================================================== */
+.chart .hit:focus-visible { outline: 2px solid var(--gold); outline-offset: 1px; }
+.chart .legend i { position: relative; overflow: hidden; }
+.chart .foot { gap: 16px; }
+.chart .axis-title {
+  fill: var(--ink-dim); font-size: 9.5px; letter-spacing: .16em;
+  text-transform: uppercase;
+}
+.chart table:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+.chart caption {
+  caption-side: top; text-align: left; font-size: 9.5px; letter-spacing: .16em;
+  text-transform: uppercase; color: var(--ink-dim); padding-bottom: 6px;
+}
+
+/* Screen-reader-only, for the live region and the skip link. */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+.skip {
+  position: absolute; left: 50%; top: -60px; transform: translateX(-50%);
+  z-index: 100; background: var(--black); color: var(--gold);
+  padding: 11px 20px; border-radius: 0 0 var(--r) var(--r);
+  font-size: 11px; letter-spacing: .14em; text-transform: uppercase;
+  transition: top .18s ease;
+}
+.skip:focus { top: 0; }
+
+/* ==================================================================
+   Motion and small screens
+   ================================================================== */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .001ms !important; animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+  }
+  .msg { animation: none; }
+  .suggest button:hover, .send:hover:not(:disabled), .drop:hover { transform: none; }
+}
+
+/* ------------------------------------------------------------------
+   Responsive.
+
+   [claude] Four steps, and the one that matters is 900px, where the
+   sidebar stops being a column and becomes a drawer. It used to be
+   `display: none` — the app did not adapt to a small screen so much as
+   lose three of its four features on one.
+
+   Checked at 375, 768, 1024 and 1440. The rule the layout has to keep at
+   every width: the composer stays reachable, and nothing scrolls
+   sideways.
+   ------------------------------------------------------------------ */
+
+/* Large desktop — the column can afford to breathe, and so can the text. */
+@media (min-width: 1440px) {
+  body { grid-template-columns: 324px 1fr; gap: 16px; padding: 16px; }
+  .wrap { max-width: 760px; }
+  .log { padding-left: 56px; padding-right: 56px; }
+  .composer, header.bar { padding-left: 56px; padding-right: 56px; }
+}
+
+/* Small desktop / large tablet — narrow the chrome, never the content. */
+@media (max-width: 1180px) and (min-width: 901px) {
+  body { grid-template-columns: 264px 1fr; }
+  .log { padding-left: 30px; padding-right: 30px; }
+  .composer, header.bar { padding-left: 30px; padding-right: 30px; }
+  .brand { padding: 20px 18px 14px; }
+}
+
+/* ---- the drawer threshold ---- */
+@media (max-width: 900px) {
+  body {
+    grid-template-columns: 1fr;
+    padding: 10px; gap: 0;
+    /* [claude] dvh, not vh: on iOS Safari `100vh` is the height with the
+       address bar *hidden*, so at rest the composer sat below the fold and
+       the send button could not be reached at all. */
+    height: 100dvh;
+  }
+
+  .menu-btn { display: flex; }
+
+  /* Same panel, moved off canvas. Motion drives the transform; these are
+     the resting positions it animates between. */
+  aside {
+    position: fixed; top: 0; bottom: 0; left: 0; z-index: 40;
+    width: min(322px, 86vw); border-radius: 0;
+    transform: translateX(-100%);
+    box-shadow: 0 0 60px -10px rgba(13,13,13,.5);
+  }
+  aside.open { transform: none; }
+
+  main { border-radius: var(--r); }
+  header.bar { border-radius: var(--r) var(--r) 0 0; padding: 0 16px; }
+  .composer { border-radius: 0 0 var(--r) var(--r); padding: 12px 16px 14px; }
+  .log { padding-left: 18px; padding-right: 18px; }
+  .empty { padding-top: 3vh; }
+  .empty .big { font-size: 24px; }
+}
+
+/* ---- phone ---- */
+@media (max-width: 560px) {
+  :root { --header-h: 56px; --composer-h: 124px; }
+  body { padding: 0; }
+  main { border-radius: 0; border-left: none; border-right: none; }
+  header.bar, .composer { border-radius: 0; }
+  .log { padding-left: 14px; padding-right: 14px; }
+
+  /* The send button's label is the thing that has to give, not its target
+     size — 44×44 is the floor and this stays above it. */
+  .send { width: 62px; padding: 12px 0; letter-spacing: .1em; font-size: 9px; }
+  .composer .wrap { gap: 8px; }
+  .foot { display: none; }
+
+  header.bar .title { font-size: 15px; }
+  .status .label { display: none; }
+  .status { padding: 7px 9px; }
+
+  .msg { margin-bottom: 26px; }
+  .msg.agent .bubble { font-size: 14px; line-height: 1.75; }
+  .empty .big { font-size: 21px; }
+  .empty .lead { letter-spacing: .28em; font-size: 8.5px; }
+  .suggest button { font-size: 12.5px; padding: 12px 15px; }
+
+  .chart { padding: 15px 13px 11px; border-radius: var(--r); }
+  .chart .foot { gap: 12px; flex-wrap: wrap; justify-content: flex-start; }
+
+  .palette-wrap { padding: 8vh 12px 12px; }
+  .palette { max-height: 74vh; }
+  .after { gap: 12px; flex-wrap: wrap; }
+}
+
+/* ---- very small phone (375px and below) ---- */
+@media (max-width: 380px) {
+  .log { padding-left: 11px; padding-right: 11px; }
+  header.bar, .composer { padding-left: 11px; padding-right: 11px; }
+  .empty .big { font-size: 19px; }
+  .send { width: 54px; }
+}
+
+/* Landscape phone: almost no vertical room, so the empty state's air goes. */
+@media (max-height: 460px) and (max-width: 900px) {
+  .empty { padding-top: 0; }
+  .empty .mark { height: 54px; margin-bottom: 12px; }
+  .empty .big { font-size: 18px; margin-bottom: 6px; }
+  .empty .lead { margin-bottom: 16px; }
+}
+
+/* ------------------------------------------------------------------
+   Coarse pointers get real targets.
+
+   [claude] 44×44 is the floor, and the controls here are deliberately
+   small: a 12px delete cross and a 10px "Details" link are right for a
+   mouse and unusable with a thumb. Growing them to 44px on touch would
+   mean designing the panel twice.
+
+   So the *hit area* grows and the *mark* does not. An absolutely
+   positioned `::after` on a relatively positioned control extends what is
+   clickable well past what is drawn, without occupying any layout space —
+   which is what lets the same sidebar work under both pointers.
+
+   The one thing this cannot do on its own is keep targets apart. Two 12px
+   controls 16px apart, each grown to 44px, overlap — so wherever a hit
+   area is widened, the gap between the controls is widened with it, and
+   the 8px minimum separation is what decides by how much.
+   ------------------------------------------------------------------ */
+@media (pointer: coarse) {
+  .thread { padding: 13px 12px; }
+
+  /* The row's label fills the row's height rather than sitting in the
+     middle of it, so the whole band opens the conversation. */
+  .thread .t { padding: 12px 0; margin: -12px 0; }
+
+  .thread .kill, .file-row .kill { opacity: 1; }
+
+  /* Small marks, large targets. */
+  .kill, .icon, .after button, .chart .foot button, .who-btn .chev {
+    position: relative;
+  }
+  .kill::after, .icon::after {
+    content: ""; position: absolute; top: 50%; left: 50%;
+    width: 44px; height: 44px; transform: translate(-50%, -50%);
+  }
+  .after button::after, .chart .foot button::after {
+    /* -16px vertical on a 12px label is exactly the 44px floor. */
+    content: ""; position: absolute; inset: -16px -7px;
+  }
+
+  /* Widened so the enlarged hit areas above keep 8px between them. */
+  .after, .chart .foot { gap: 26px; }
+
+  .icon { padding: 9px 10px; margin: -7px -6px; }
+  .drop { padding: 20px 12px; }
+
+  /* Controls that can simply be big enough. */
+  .send, .menu-btn, .jump, .primary, .palette-item { min-height: 44px; }
+  .menu-btn { width: 44px; }
+  .file-row { padding: 11px 0; }
+}
+
