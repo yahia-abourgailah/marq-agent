@@ -40,6 +40,16 @@
   --rule: rgba(27, 26, 24, .11);
   --rule-strong: rgba(27, 26, 24, .18);
 
+  /* [claude] Gold as TEXT on a light ground.
+   *
+   * The brand gold is 2.09:1 on ivory — the same figure the palette
+   * validator flagged when I derived the chart colours. It is a fine rule,
+   * mark and accent, and unreadable as type. This is the deepest step that
+   * still reads as the same family and clears 4.5:1 (5.21).
+   *
+   * On black the brand gold is 8.4:1, so the sidebar keeps it unchanged. */
+  --gold-ink: #7D6220;
+
   --gold-soft: rgba(203, 164, 110, .34);
   --gold-faint: rgba(203, 164, 110, .13);
 
@@ -54,6 +64,15 @@
   --display: "Playfair Display", Georgia, "Times New Roman", serif;
   --body: "Montserrat", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* [claude] A radius scale rather than a scattering of 2s and 3s. The
+     brand is elegant rather than sharp, and near-square corners read as
+     unfinished at this weight of type. */
+  --r-xs: 6px;
+  --r-sm: 10px;
+  --r: 14px;
+  --r-lg: 20px;
+  --r-pill: 999px;
 
   --header-h: 62px;
   /* [claude] The composer is absolutely positioned so content scrolls
@@ -71,7 +90,12 @@ body {
   color: var(--ink);
   font-family: var(--body);
   font-size: 14px; line-height: 1.65; font-weight: 400;
-  display: grid; grid-template-columns: 296px 1fr;
+  /* [claude] Two rounded panels floating on the ambient ground, rather
+     than two regions butted against each other. The inset is what lets the
+     wash show around them — and what makes rounding read as deliberate
+     instead of as a corner that got clipped. */
+  display: grid; grid-template-columns: 300px 1fr; gap: 14px;
+  padding: 14px;
   height: 100vh; overflow: hidden;
   -webkit-font-smoothing: antialiased;
 }
@@ -91,7 +115,7 @@ aside, main { position: relative; z-index: 1; }
 :focus-visible {
   outline: 2px solid var(--gold);
   outline-offset: 2px;
-  border-radius: 2px;
+  border-radius: var(--r-xs);
 }
 
 .label {
@@ -102,16 +126,24 @@ aside, main { position: relative; z-index: 1; }
 /* ==================================================================
    Sidebar — deep glass over the wash
    ================================================================== */
+/* [claude] Solid black, not glass.
+ *
+ * This panel was translucent for one commit and the gold wash bled
+ * straight through it, lifting the brand's #0D0D0D to a muddy grey — the
+ * single most recognisable thing in the identity, faded. Glass belongs on
+ * the chrome and the cards, where something passes underneath; a brand
+ * panel is not a place to spend transparency.
+ *
+ * The gradient is a touch of depth rather than translucency: black at the
+ * top, a shade warmer at the foot, so the panel has life without lifting. */
 aside {
-  background: var(--glass-dark);
+  background:
+    linear-gradient(178deg, #0D0D0D 0%, #121110 62%, #171412 100%);
   color: var(--ivory);
   display: flex; flex-direction: column; min-width: 0;
-  border-right: 1px solid rgba(203,164,110,.16);
-}
-@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
-  aside { background: rgba(13,13,13,.72);
-          -webkit-backdrop-filter: blur(26px) saturate(1.3);
-          backdrop-filter: blur(26px) saturate(1.3); }
+  border-radius: var(--r-lg);
+  box-shadow: 0 2px 6px rgba(13,13,13,.10), 0 20px 50px -24px rgba(13,13,13,.42);
+  overflow: hidden;
 }
 
 .brand { padding: 30px 26px 20px; text-align: center; }
@@ -144,7 +176,7 @@ input, textarea, button, select { font-family: var(--body); font-size: 13px; col
 
 aside input[type=password], aside input[type=text] {
   width: 100%; background: rgba(245,243,239,.06); color: var(--ivory);
-  border: 1px solid rgba(245,243,239,.14); border-radius: 3px;
+  border: 1px solid rgba(245,243,239,.14); border-radius: var(--r-sm);
   padding: 9px 11px; letter-spacing: .02em; transition: all .18s ease;
 }
 aside input:focus {
@@ -156,7 +188,7 @@ aside input:focus {
 .hint-dark { color: rgba(245,243,239,.4); margin-top: 8px; }
 
 .drop {
-  border: 1px dashed rgba(203,164,110,.4); border-radius: 3px;
+  border: 1px dashed rgba(203,164,110,.4); border-radius: var(--r);
   padding: 16px 12px; text-align: center; cursor: pointer;
   transition: all .2s ease; color: rgba(245,243,239,.6);
   font-size: 11px; letter-spacing: .06em;
@@ -178,13 +210,13 @@ aside input:focus {
         transition: color .16s ease; }
 .kill:hover { color: var(--gold); }
 
-.threads { flex: 1; overflow-y: auto; padding: 4px 14px 18px; min-height: 0; }
+.threads { flex: 1; overflow-y: auto; padding: 4px 12px 18px; min-height: 0; }
 .threads::-webkit-scrollbar, .log::-webkit-scrollbar { width: 7px; }
-.threads::-webkit-scrollbar-thumb { background: rgba(245,243,239,.13); border-radius: 4px; }
-.log::-webkit-scrollbar-thumb { background: rgba(27,26,24,.14); border-radius: 4px; }
+.threads::-webkit-scrollbar-thumb { background: rgba(245,243,239,.13); border-radius: var(--r); }
+.log::-webkit-scrollbar-thumb { background: rgba(27,26,24,.14); border-radius: var(--r); }
 .thread {
-  padding: 9px 12px; cursor: pointer; display: flex; gap: 8px; align-items: baseline;
-  border-left: 2px solid transparent; border-radius: 0 3px 3px 0;
+  padding: 10px 12px; cursor: pointer; display: flex; gap: 8px; align-items: baseline;
+  border-left: 2px solid transparent; border-radius: 0 var(--r-sm) var(--r-sm) 0;
   transition: all .16s ease;
 }
 .thread:hover { background: rgba(245,243,239,.05); }
@@ -199,7 +231,7 @@ aside input:focus {
 
 .btn-row { display: flex; gap: 8px; }
 .btn {
-  flex: 1; cursor: pointer; border-radius: 3px; padding: 9px 10px;
+  flex: 1; cursor: pointer; border-radius: var(--r-sm); padding: 10px 10px;
   font-size: 9.5px; letter-spacing: .18em; text-transform: uppercase; font-weight: 500;
   background: transparent; color: var(--gold);
   border: 1px solid rgba(203,164,110,.38); transition: all .2s ease;
@@ -210,11 +242,22 @@ aside input:focus {
 /* ==================================================================
    Main — frosted chrome, content scrolling beneath
    ================================================================== */
-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+main {
+  display: flex; flex-direction: column; min-width: 0; min-height: 0;
+  border-radius: var(--r-lg); overflow: hidden;
+  background: rgba(255,255,255,.34);
+  border: 1px solid rgba(255,255,255,.5);
+  box-shadow: 0 2px 6px rgba(27,26,24,.04), 0 20px 56px -26px rgba(27,26,24,.20);
+}
+@supports (backdrop-filter: blur(1px)) {
+  main { -webkit-backdrop-filter: blur(20px) saturate(1.4);
+         backdrop-filter: blur(20px) saturate(1.4); }
+}
 
 header.bar {
   position: absolute; top: 0; left: 0; right: 0; z-index: 6;
   height: var(--header-h); padding: 0 40px;
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
   display: flex; align-items: center; justify-content: space-between;
   background: var(--glass); border-bottom: 1px solid var(--rule);
 }
@@ -222,7 +265,7 @@ header.bar .title { font-family: var(--display); font-size: 17px; letter-spacing
 
 .status {
   display: flex; align-items: center; gap: 8px; cursor: default;
-  padding: 5px 12px; border-radius: 20px;
+  padding: 5px 12px; border-radius: var(--r-pill);
   background: var(--glass-strong); border: 1px solid var(--rule);
 }
 .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-dim); flex: none; }
@@ -237,6 +280,7 @@ header.bar .title { font-family: var(--display); font-size: 17px; letter-spacing
   position: absolute; bottom: 0; left: 0; right: 0; z-index: 6;
   border-top: 1px solid var(--rule); padding: 16px 40px 18px;
   background: var(--glass);
+  border-radius: 0 0 var(--r-lg) var(--r-lg);
 }
 @supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
   header.bar, .composer {
@@ -250,7 +294,7 @@ header.bar .title { font-family: var(--display); font-size: 17px; letter-spacing
 textarea {
   flex: 1; resize: none; max-height: 170px;
   background: var(--glass-strong); border: 1px solid var(--rule-strong);
-  padding: 12px 15px; font-size: 14px; line-height: 1.6; border-radius: 3px;
+  padding: 13px 16px; font-size: 14px; line-height: 1.6; border-radius: var(--r);
   transition: all .18s ease;
 }
 textarea:focus {
@@ -259,7 +303,7 @@ textarea:focus {
 }
 .send {
   flex: none; width: 112px; padding: 12px 0; cursor: pointer; border: none;
-  background: var(--burgundy); color: var(--gold); border-radius: 3px;
+  background: var(--burgundy); color: var(--gold); border-radius: var(--r);
   font-size: 9.5px; letter-spacing: .2em; text-transform: uppercase; font-weight: 600;
   transition: all .2s ease; box-shadow: var(--lift);
 }
@@ -282,8 +326,8 @@ textarea:focus {
 }
 .msg.user .bubble {
   background: var(--glass-strong); border: 1px solid var(--rule);
-  border-left: 2px solid var(--gold); border-radius: 0 3px 3px 0;
-  padding: 14px 18px; white-space: pre-wrap; word-wrap: break-word;
+  border-left: 2px solid var(--gold); border-radius: 0 var(--r) var(--r) 0;
+  padding: 15px 19px; white-space: pre-wrap; word-wrap: break-word;
   box-shadow: var(--lift);
 }
 @supports (backdrop-filter: blur(1px)) {
@@ -302,7 +346,7 @@ textarea:focus {
 .msg.agent .bubble em { font-style: italic; color: var(--charcoal); }
 .msg.agent .bubble code {
   font-family: var(--mono); font-size: 12.5px; background: var(--gold-faint);
-  border: 1px solid var(--gold-soft); padding: 1px 5px; border-radius: 3px;
+  border: 1px solid var(--gold-soft); padding: 1px 5px; border-radius: var(--r-sm);
 }
 .msg.agent .bubble h4 {
   font-family: var(--display); font-size: 15px; font-weight: 500;
@@ -312,7 +356,7 @@ textarea:focus {
 .msg.agent .bubble li { position: relative; padding-left: 20px; margin-bottom: 5px; }
 .msg.agent .bubble li::before {
   content: "◇"; position: absolute; left: 2px; top: 0;
-  color: var(--gold); font-size: 10px; line-height: 1.9;
+  color: var(--gold-ink); font-size: 10px; line-height: 1.9;
 }
 
 /* while the agent works */
@@ -349,7 +393,7 @@ textarea:focus {
   display: flex; align-items: center; gap: 6px; transition: color .16s ease;
 }
 .after button:hover { color: var(--burgundy); }
-.after .gem { color: var(--gold); font-size: 9px; transition: transform .22s ease; }
+.after .gem { color: var(--gold-ink); font-size: 9px; transition: transform .22s ease; }
 .after button.open .gem { transform: rotate(90deg); }
 
 .details { margin-top: 12px; border-left: 2px solid var(--gold-soft);
@@ -362,7 +406,7 @@ textarea:focus {
 .pill {
   font-size: 9.5px; letter-spacing: .12em; text-transform: uppercase;
   padding: 3px 10px; border: 1px solid var(--rule); color: var(--ink-dim);
-  border-radius: 20px; background: var(--glass-strong);
+  border-radius: var(--r-pill); background: var(--glass-strong);
 }
 .pill.who { color: var(--burgundy); border-color: rgba(91,15,26,.24); }
 .pill.tool { color: #8A6D3F; border-color: var(--gold-soft); background: var(--gold-faint); }
@@ -371,20 +415,20 @@ textarea:focus {
 .q .qh { font-size: 9.5px; letter-spacing: .18em; text-transform: uppercase;
          color: var(--ink-dim); margin-bottom: 6px; }
 .q pre {
-  margin: 0; padding: 14px 16px; background: var(--black); color: #D9D4C9;
-  overflow-x: auto; border-radius: 3px; box-shadow: var(--lift);
+  margin: 0; padding: 15px 17px; background: var(--black); color: #D9D4C9;
+  overflow-x: auto; border-radius: var(--r); box-shadow: var(--lift);
   font: 11.5px/1.7 var(--mono);
 }
 .q pre .kw { color: var(--gold); }
 .q .meta { margin-top: 5px; font-size: 10.5px; color: var(--ink-dim); letter-spacing: .04em; }
 .q .meta.warn { color: var(--burgundy); }
-.q .declined { padding: 10px 14px; background: var(--glass-strong);
+.q .declined { padding: 11px 15px; background: var(--glass-strong); border-radius: var(--r);
                border: 1px solid var(--rule); font-size: 12.5px; color: var(--ink-dim); }
 
 .err {
   border: 1px solid rgba(91,15,26,.28); border-left: 2px solid var(--burgundy);
-  background: rgba(91,15,26,.05); padding: 13px 17px; color: var(--burgundy);
-  border-radius: 0 3px 3px 0;
+  background: rgba(91,15,26,.05); padding: 14px 18px; color: var(--burgundy);
+  border-radius: 0 var(--r) var(--r) 0;
 }
 
 /* ==================================================================
@@ -398,13 +442,13 @@ textarea:focus {
 }
 .empty .lead {
   font-size: 9px; letter-spacing: .38em; text-transform: uppercase;
-  color: var(--gold); margin-bottom: 30px;
+  color: var(--gold-ink); margin-bottom: 30px;
 }
 .suggest { display: grid; gap: 9px; max-width: 440px; margin: 0 auto; }
 .suggest button {
-  background: var(--glass); border: 1px solid var(--rule); padding: 13px 17px;
+  background: var(--glass); border: 1px solid var(--rule); padding: 14px 18px;
   cursor: pointer; text-align: left; font-size: 13px; color: var(--ink);
-  border-radius: 3px; transition: all .2s ease; box-shadow: var(--lift);
+  border-radius: var(--r); transition: all .2s ease; box-shadow: var(--lift);
 }
 .suggest button:hover {
   border-color: var(--gold-soft); background: var(--glass-strong);
@@ -423,7 +467,7 @@ textarea:focus {
    ================================================================== */
 .chart {
   margin: 18px 0 6px; background: var(--glass-strong);
-  border: 1px solid var(--rule); border-radius: 4px;
+  border: 1px solid var(--rule); border-radius: var(--r-lg);
   padding: 20px 20px 14px; box-shadow: var(--lift);
 }
 @supports (backdrop-filter: blur(1px)) {
@@ -445,7 +489,7 @@ textarea:focus {
 .chart .legend { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 12px; }
 .chart .legend span { display: flex; align-items: center; gap: 7px;
                       font-size: 10.5px; color: var(--ink-dim); }
-.chart .legend i { width: 10px; height: 10px; border-radius: 2px; display: block; }
+.chart .legend i { width: 10px; height: 10px; border-radius: var(--r-xs); display: block; }
 .chart .foot { display: flex; justify-content: flex-end; margin-top: 10px; }
 .chart .foot button {
   background: none; border: none; cursor: pointer; padding: 0;
@@ -464,7 +508,7 @@ textarea:focus {
 .chart .rel { position: relative; }
 .chart .tip {
   position: absolute; pointer-events: none; background: rgba(13,13,13,.92);
-  color: var(--ivory); padding: 7px 11px; font-size: 11.5px; border-radius: 3px;
+  color: var(--ivory); padding: 7px 11px; font-size: 11.5px; border-radius: var(--r-sm);
   white-space: nowrap; opacity: 0; transition: opacity .12s ease; z-index: 30;
   border-left: 2px solid var(--gold); transform: translate(-50%, -120%);
   box-shadow: var(--lift-lg);
@@ -480,8 +524,8 @@ textarea:focus {
 .toast {
   position: fixed; bottom: 26px; left: 50%;
   transform: translateX(-50%) translateY(12px);
-  background: rgba(13,13,13,.9); color: var(--ivory); padding: 13px 20px;
-  font-size: 12.5px; border-radius: 3px; z-index: 50; opacity: 0;
+  background: rgba(13,13,13,.9); color: var(--ivory); padding: 14px 22px;
+  font-size: 12.5px; border-radius: var(--r-pill); z-index: 50; opacity: 0;
   transition: all .3s cubic-bezier(.22,.8,.3,1); max-width: 520px;
   pointer-events: none; border-left: 2px solid var(--gold);
   box-shadow: var(--lift-lg);
