@@ -8,12 +8,24 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500&family=Montserrat:wght@300;400;500;600&display=swap" rel="stylesheet">
 <style>
-/* ============================================================
-   The MarQ Communities — brand system
-   Black #0D0D0D · Ivory #F5F3EF · Burgundy #5B0F1A
-   Gold  #CBA46E · Charcoal #2A2A2A
-   Playfair Display (display) · Montserrat (supporting)
-   ============================================================ */
+/* ==================================================================
+   The MarQ Communities — agent console
+
+   Brand is fixed and comes first: Playfair Display and Montserrat, the
+   ivory/black split, gold on rules and accents, burgundy on the one
+   action. Glass fills gaps; it never replaces a brand decision.
+
+   Glass has a job here rather than a look. The header and composer are
+   frosted because content scrolls *beneath* them and legibility over
+   moving text is the whole reason the technique exists. Cards are
+   translucent so the page reads as layered rather than boxed. Answer text
+   sits on the bare ground, where contrast is highest — body copy never
+   rides a heavily transparent surface.
+
+   Glass also needs something worth blurring: two very low-opacity washes
+   sit under everything so the frost has colour to refract. On a flat
+   ground backdrop-filter is invisible.
+   ================================================================== */
 :root {
   --black: #0D0D0D;
   --ivory: #F5F3EF;
@@ -21,43 +33,91 @@
   --gold: #CBA46E;
   --charcoal: #2A2A2A;
 
-  --gold-soft: rgba(203,164,110,.32);
-  --gold-faint: rgba(203,164,110,.12);
-  --ink: #1a1a1a;
-  --ink-dim: #6f6a63;
-  --rule: #e2ded6;
+  /* Neutrals biased warm toward the gold — a pure grey reads unconsidered
+     beside this palette. */
+  --ink: #1B1A18;
+  --ink-dim: #726B61;
+  --rule: rgba(27, 26, 24, .11);
+  --rule-strong: rgba(27, 26, 24, .18);
+
+  --gold-soft: rgba(203, 164, 110, .34);
+  --gold-faint: rgba(203, 164, 110, .13);
+
+  --glass: rgba(255, 255, 255, .66);
+  --glass-strong: rgba(255, 255, 255, .82);
+  --glass-dark: rgba(13, 13, 13, .84);
+  --blur: blur(18px) saturate(1.5);
+
+  --lift: 0 1px 2px rgba(27,26,24,.04), 0 8px 28px -12px rgba(27,26,24,.16);
+  --lift-lg: 0 2px 4px rgba(27,26,24,.05), 0 18px 48px -20px rgba(27,26,24,.24);
 
   --display: "Playfair Display", Georgia, "Times New Roman", serif;
   --body: "Montserrat", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --header-h: 62px;
+  /* [claude] The composer is absolutely positioned so content scrolls
+     beneath its frosted bar; the log needs matching bottom room or the
+     last lines hide behind it. Measured, not guessed: 109px at rest, plus
+     air, plus what the textarea can grow by. */
+  --composer-h: 132px;
 }
+
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
+
 body {
-  background: var(--ivory); color: var(--ink);
-  font-family: var(--body); font-weight: 400; font-size: 14px; line-height: 1.65;
-  display: grid; grid-template-columns: 288px 1fr; height: 100vh; overflow: hidden;
+  background: var(--ivory);
+  color: var(--ink);
+  font-family: var(--body);
+  font-size: 14px; line-height: 1.65; font-weight: 400;
+  display: grid; grid-template-columns: 296px 1fr;
+  height: 100vh; overflow: hidden;
   -webkit-font-smoothing: antialiased;
 }
+
+/* The ambient ground. Fixed, behind everything, giving the glass colour
+   to refract — without it backdrop-filter has no visible effect. */
+body::before {
+  content: ""; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background:
+    radial-gradient(58vw 46vh at 12% -6%, rgba(203,164,110,.22), transparent 62%),
+    radial-gradient(52vw 52vh at 104% 108%, rgba(91,15,26,.13), transparent 60%),
+    radial-gradient(42vw 34vh at 78% 8%, rgba(203,164,110,.09), transparent 66%);
+}
+aside, main { position: relative; z-index: 1; }
 ::selection { background: var(--gold-soft); }
 
-/* wide-tracked small caps — the brand's label voice */
+:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
 .label {
   font-size: 10px; font-weight: 500; letter-spacing: .22em;
   text-transform: uppercase; color: var(--ink-dim);
 }
 
-/* ============================================================
-   Sidebar — the black panel
-   ============================================================ */
+/* ==================================================================
+   Sidebar — deep glass over the wash
+   ================================================================== */
 aside {
-  background: var(--black); color: var(--ivory);
+  background: var(--glass-dark);
+  color: var(--ivory);
   display: flex; flex-direction: column; min-width: 0;
-  border-right: 1px solid var(--black);
+  border-right: 1px solid rgba(203,164,110,.16);
 }
-.brand { padding: 30px 26px 22px; text-align: center; }
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+  aside { background: rgba(13,13,13,.72);
+          -webkit-backdrop-filter: blur(26px) saturate(1.3);
+          backdrop-filter: blur(26px) saturate(1.3); }
+}
+
+.brand { padding: 30px 26px 20px; text-align: center; }
 .brand .the {
-  font-family: var(--body); font-size: 9px; letter-spacing: .42em;
-  text-transform: uppercase; color: var(--gold); margin-bottom: 6px;
+  font-size: 9px; letter-spacing: .42em; text-transform: uppercase;
+  color: var(--gold); margin-bottom: 6px;
 }
 .brand .wordmark {
   font-family: var(--display); font-size: 30px; letter-spacing: .1em;
@@ -68,38 +128,44 @@ aside {
   color: rgba(245,243,239,.55);
 }
 .rule-gold {
-  height: 1px; background: linear-gradient(90deg, transparent, var(--gold), transparent);
-  margin: 18px 26px;
+  height: 1px; margin: 16px 26px;
+  background: linear-gradient(90deg, transparent, var(--gold), transparent);
 }
 .tagline {
   text-align: center; font-size: 8px; letter-spacing: .34em;
   text-transform: uppercase; color: var(--gold); padding-bottom: 4px;
 }
 
-.panel { padding: 20px 26px; }
-.panel + .panel { border-top: 1px solid rgba(245,243,239,.09); }
+.panel { padding: 18px 26px; }
+.panel + .panel { border-top: 1px solid rgba(245,243,239,.08); }
 .panel .label { color: rgba(245,243,239,.42); margin-bottom: 10px; display: block; }
 
-input, textarea, button, select {
-  font-family: var(--body); font-size: 13px; color: inherit;
-}
+input, textarea, button, select { font-family: var(--body); font-size: 13px; color: inherit; }
+
 aside input[type=password], aside input[type=text] {
-  width: 100%; background: rgba(245,243,239,.05); color: var(--ivory);
-  border: 1px solid rgba(245,243,239,.14); border-radius: 2px;
-  padding: 9px 11px; letter-spacing: .02em;
+  width: 100%; background: rgba(245,243,239,.06); color: var(--ivory);
+  border: 1px solid rgba(245,243,239,.14); border-radius: 3px;
+  padding: 9px 11px; letter-spacing: .02em; transition: all .18s ease;
 }
-aside input:focus { outline: none; border-color: var(--gold); background: rgba(203,164,110,.07); }
-.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px; }
+aside input:focus {
+  outline: none; border-color: var(--gold);
+  background: rgba(203,164,110,.09);
+  box-shadow: 0 0 0 3px rgba(203,164,110,.12);
+}
+.mono { font-family: var(--mono); font-size: 10.5px; }
 .hint-dark { color: rgba(245,243,239,.4); margin-top: 8px; }
 
-/* drop zone */
 .drop {
-  border: 1px dashed rgba(203,164,110,.42); border-radius: 2px;
+  border: 1px dashed rgba(203,164,110,.4); border-radius: 3px;
   padding: 16px 12px; text-align: center; cursor: pointer;
-  transition: all .18s ease; color: rgba(245,243,239,.6); font-size: 11px;
-  letter-spacing: .06em;
+  transition: all .2s ease; color: rgba(245,243,239,.6);
+  font-size: 11px; letter-spacing: .06em;
+  background: rgba(245,243,239,.02);
 }
-.drop:hover, .drop.over { border-color: var(--gold); background: rgba(203,164,110,.08); color: var(--gold); }
+.drop:hover, .drop.over {
+  border-color: var(--gold); background: rgba(203,164,110,.1);
+  color: var(--gold); transform: translateY(-1px);
+}
 .drop svg { display: block; margin: 0 auto 8px; opacity: .8; }
 
 .file-row {
@@ -108,173 +174,148 @@ aside input:focus { outline: none; border-color: var(--gold); background: rgba(2
 }
 .file-row .fn { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-row .meta { color: rgba(245,243,239,.4); font-size: 10px; letter-spacing: .04em; }
-.kill { cursor: pointer; color: rgba(245,243,239,.35); padding: 0 2px; line-height: 1; }
+.kill { cursor: pointer; color: rgba(245,243,239,.32); padding: 0 3px; line-height: 1;
+        transition: color .16s ease; }
 .kill:hover { color: var(--gold); }
 
-.threads { flex: 1; overflow-y: auto; padding: 6px 14px 18px; min-height: 0; }
-.threads::-webkit-scrollbar, .log::-webkit-scrollbar { width: 6px; }
-.threads::-webkit-scrollbar-thumb { background: rgba(245,243,239,.14); }
-.log::-webkit-scrollbar-thumb { background: var(--rule); }
+.threads { flex: 1; overflow-y: auto; padding: 4px 14px 18px; min-height: 0; }
+.threads::-webkit-scrollbar, .log::-webkit-scrollbar { width: 7px; }
+.threads::-webkit-scrollbar-thumb { background: rgba(245,243,239,.13); border-radius: 4px; }
+.log::-webkit-scrollbar-thumb { background: rgba(27,26,24,.14); border-radius: 4px; }
 .thread {
   padding: 9px 12px; cursor: pointer; display: flex; gap: 8px; align-items: baseline;
-  border-left: 2px solid transparent; transition: all .15s ease;
+  border-left: 2px solid transparent; border-radius: 0 3px 3px 0;
+  transition: all .16s ease;
 }
-.thread:hover { background: rgba(245,243,239,.045); }
-.thread.active { border-left-color: var(--gold); background: rgba(203,164,110,.09); }
+.thread:hover { background: rgba(245,243,239,.05); }
+.thread.active { border-left-color: var(--gold); background: rgba(203,164,110,.11); }
 .thread .t {
   flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-size: 12.5px; color: rgba(245,243,239,.86);
 }
 .thread.active .t { color: var(--ivory); }
-.thread .n { font-size: 9.5px; color: rgba(245,243,239,.35); letter-spacing: .08em; }
+.thread .n { font-size: 9.5px; color: rgba(245,243,239,.34); letter-spacing: .08em;
+             font-variant-numeric: tabular-nums; }
 
 .btn-row { display: flex; gap: 8px; }
 .btn {
-  flex: 1; cursor: pointer; border-radius: 2px; padding: 9px 10px;
+  flex: 1; cursor: pointer; border-radius: 3px; padding: 9px 10px;
   font-size: 9.5px; letter-spacing: .18em; text-transform: uppercase; font-weight: 500;
-  background: transparent; color: var(--gold); border: 1px solid rgba(203,164,110,.4);
-  transition: all .18s ease;
+  background: transparent; color: var(--gold);
+  border: 1px solid rgba(203,164,110,.38); transition: all .2s ease;
 }
 .btn:hover:not(:disabled) { background: var(--gold); color: var(--black); border-color: var(--gold); }
 .btn:disabled { opacity: .35; cursor: not-allowed; }
 
-/* ============================================================
-   Main — the ivory panel
-   ============================================================ */
-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--ivory); }
+/* ==================================================================
+   Main — frosted chrome, content scrolling beneath
+   ================================================================== */
+main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+
 header.bar {
-  padding: 16px 40px; border-bottom: 1px solid var(--rule);
-  display: flex; align-items: center; justify-content: space-between; background: #fff;
+  position: absolute; top: 0; left: 0; right: 0; z-index: 6;
+  height: var(--header-h); padding: 0 40px;
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--glass); border-bottom: 1px solid var(--rule);
 }
 header.bar .title { font-family: var(--display); font-size: 17px; letter-spacing: .04em; }
-.status { display: flex; align-items: center; gap: 8px; cursor: default; }
-.dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-dim); }
-.dot.ok { background: #2f7d5b; } .dot.bad { background: var(--burgundy); }
 
-.log { flex: 1; overflow-y: auto; padding: 44px 40px 20px; }
+.status {
+  display: flex; align-items: center; gap: 8px; cursor: default;
+  padding: 5px 12px; border-radius: 20px;
+  background: var(--glass-strong); border: 1px solid var(--rule);
+}
+.dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-dim); flex: none; }
+.dot.ok { background: #2F7D5B; box-shadow: 0 0 0 3px rgba(47,125,91,.16); }
+.dot.bad { background: var(--burgundy); box-shadow: 0 0 0 3px rgba(91,15,26,.14); }
+
+.log { flex: 1; overflow-y: auto;
+       padding: calc(var(--header-h) + 34px) 40px var(--composer-h); }
 .wrap { max-width: 720px; margin: 0 auto; }
 
-.msg { margin-bottom: 34px; }
-.who {
-  display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap;
+.composer {
+  position: absolute; bottom: 0; left: 0; right: 0; z-index: 6;
+  border-top: 1px solid var(--rule); padding: 16px 40px 18px;
+  background: var(--glass);
 }
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+  header.bar, .composer {
+    background: rgba(245,243,239,.62);
+    -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
+  }
+  .status { background: rgba(255,255,255,.5);
+            -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
+}
+.composer .wrap { display: flex; gap: 12px; align-items: flex-end; }
+textarea {
+  flex: 1; resize: none; max-height: 170px;
+  background: var(--glass-strong); border: 1px solid var(--rule-strong);
+  padding: 12px 15px; font-size: 14px; line-height: 1.6; border-radius: 3px;
+  transition: all .18s ease;
+}
+textarea:focus {
+  outline: none; border-color: var(--gold); background: #fff;
+  box-shadow: 0 0 0 3px rgba(203,164,110,.16);
+}
+.send {
+  flex: none; width: 112px; padding: 12px 0; cursor: pointer; border: none;
+  background: var(--burgundy); color: var(--gold); border-radius: 3px;
+  font-size: 9.5px; letter-spacing: .2em; text-transform: uppercase; font-weight: 600;
+  transition: all .2s ease; box-shadow: var(--lift);
+}
+.send:hover:not(:disabled) { background: var(--black); transform: translateY(-1px);
+                             box-shadow: var(--lift-lg); }
+.send:disabled { opacity: .4; cursor: not-allowed; box-shadow: none; }
+.foot { text-align: center; margin-top: 9px; font-size: 10px;
+        color: var(--ink-dim); letter-spacing: .06em; }
+
+/* ==================================================================
+   Conversation
+   ================================================================== */
+.msg { margin-bottom: 32px; animation: msgIn .34s cubic-bezier(.22,.8,.3,1) both; }
+@keyframes msgIn { from { opacity: 0; transform: translateY(6px) } to { opacity: 1; transform: none } }
+
+.who { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
 .who .name {
   font-size: 9.5px; letter-spacing: .24em; text-transform: uppercase;
   color: var(--ink-dim); font-weight: 500;
 }
 .msg.user .bubble {
-  background: #fff; border: 1px solid var(--rule); border-left: 2px solid var(--gold);
+  background: var(--glass-strong); border: 1px solid var(--rule);
+  border-left: 2px solid var(--gold); border-radius: 0 3px 3px 0;
   padding: 14px 18px; white-space: pre-wrap; word-wrap: break-word;
+  box-shadow: var(--lift);
 }
+@supports (backdrop-filter: blur(1px)) {
+  .msg.user .bubble { background: rgba(255,255,255,.6);
+                      -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+}
+/* Answer text sits on the ground, not on glass — highest contrast where
+   the most reading happens. */
 .msg.agent .bubble {
-  white-space: pre-wrap; word-wrap: break-word; font-size: 14.5px; line-height: 1.8;
-  color: #23211e;
+  white-space: normal; word-wrap: break-word;
+  font-size: 14.5px; line-height: 1.82; color: #23211E;
 }
-.msg.agent .bubble { white-space: normal; }
 .msg.agent .bubble p { margin: 0 0 10px; }
 .msg.agent .bubble p:last-child { margin-bottom: 0; }
 .msg.agent .bubble strong { font-weight: 600; color: var(--black); }
 .msg.agent .bubble em { font-style: italic; color: var(--charcoal); }
 .msg.agent .bubble code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px;
-  background: var(--gold-faint); border: 1px solid var(--gold-soft);
-  padding: 1px 5px; border-radius: 2px;
+  font-family: var(--mono); font-size: 12.5px; background: var(--gold-faint);
+  border: 1px solid var(--gold-soft); padding: 1px 5px; border-radius: 3px;
 }
 .msg.agent .bubble h4 {
   font-family: var(--display); font-size: 15px; font-weight: 500;
-  letter-spacing: .03em; margin: 16px 0 8px;
+  letter-spacing: .03em; margin: 16px 0 8px; text-wrap: balance;
 }
 .msg.agent .bubble ul { margin: 4px 0 12px; padding-left: 0; list-style: none; }
 .msg.agent .bubble li { position: relative; padding-left: 20px; margin-bottom: 5px; }
 .msg.agent .bubble li::before {
   content: "◇"; position: absolute; left: 2px; top: 0;
-  color: var(--gold); font-size: 10px; line-height: 1.85;
+  color: var(--gold); font-size: 10px; line-height: 1.9;
 }
 
-.pill {
-  font-size: 9px; letter-spacing: .14em; text-transform: uppercase;
-  padding: 3px 9px; border: 1px solid var(--rule); color: var(--ink-dim);
-  border-radius: 20px; background: #fff;
-}
-.pill.route { color: var(--burgundy); border-color: rgba(91,15,26,.28); }
-.pill.tool { color: #8a6d3f; border-color: var(--gold-soft); background: var(--gold-faint); }
-
-/* provenance — the checkable claim */
-details.prov {
-  margin-top: 14px; border: 1px solid var(--rule); background: #fff;
-}
-details.prov > summary {
-  cursor: pointer; padding: 9px 14px; list-style: none;
-  font-size: 9.5px; letter-spacing: .18em; text-transform: uppercase;
-  color: var(--ink-dim); display: flex; align-items: center; gap: 8px;
-}
-details.prov > summary::-webkit-details-marker { display: none; }
-details.prov > summary:hover { color: var(--burgundy); }
-details.prov > summary .caret { color: var(--gold); transition: transform .2s; display: inline-block; }
-details.prov[open] > summary .caret { transform: rotate(90deg); }
-details.prov pre {
-  margin: 0; padding: 15px 16px; background: var(--black); color: #d9d4c9;
-  border-top: 1px solid var(--rule); overflow-x: auto;
-  font: 11.5px/1.7 ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-details.prov pre .kw { color: var(--gold); }
-.prov-meta {
-  padding: 8px 16px; font-size: 10.5px; letter-spacing: .05em; color: var(--ink-dim);
-  background: #fbfaf8; border-top: 1px solid var(--rule);
-}
-.prov-meta.warn { color: var(--burgundy); }
-
-.err {
-  border: 1px solid rgba(91,15,26,.3); border-left: 2px solid var(--burgundy);
-  background: rgba(91,15,26,.04); padding: 13px 17px; color: var(--burgundy);
-}
-
-/* empty state */
-.empty { text-align: center; padding-top: 8vh; }
-.empty .mark { margin: 0 auto 26px; display: block; }
-.empty .big {
-  font-family: var(--display); font-size: 27px; letter-spacing: .05em;
-  color: var(--ink); margin-bottom: 12px;
-}
-.empty .lead {
-  font-size: 9px; letter-spacing: .38em; text-transform: uppercase;
-  color: var(--gold); margin-bottom: 30px;
-}
-.suggest { display: grid; gap: 8px; max-width: 430px; margin: 0 auto; }
-.suggest button {
-  background: #fff; border: 1px solid var(--rule); padding: 12px 16px; cursor: pointer;
-  text-align: left; font-size: 13px; color: var(--ink); transition: all .18s ease;
-}
-.suggest button:hover { border-color: var(--gold); background: var(--gold-faint); }
-
-/* composer */
-.composer { border-top: 1px solid var(--rule); background: #fff; padding: 18px 40px 22px; }
-.composer .wrap { display: flex; gap: 12px; align-items: flex-end; }
-textarea {
-  flex: 1; resize: none; max-height: 170px; background: var(--ivory);
-  border: 1px solid var(--rule); padding: 12px 15px; font-size: 14px; line-height: 1.6;
-  border-radius: 2px;
-}
-textarea:focus { outline: none; border-color: var(--gold); background: #fff; }
-.send {
-  flex: none; width: 108px; padding: 12px 0; cursor: pointer; border: none;
-  background: var(--burgundy); color: var(--gold);
-  font-size: 9.5px; letter-spacing: .2em; text-transform: uppercase; font-weight: 600;
-  border-radius: 2px; transition: all .2s ease;
-}
-.send:hover:not(:disabled) { background: var(--black); }
-.send:disabled { opacity: .4; cursor: not-allowed; }
-.foot { text-align: center; margin-top: 10px; font-size: 10px; color: var(--ink-dim); letter-spacing: .06em; }
-
-/* ------------------------------------------------------------------
-   While the agent works.
-
-   Says nothing about tools, routes or SQL. That is how the machine works,
-   not what was asked, and a line reading "Querying the CRM · sql_query"
-   turns a conversation into a console. The detail is not discarded — it
-   moves under the finished answer, behind one control, for the moments
-   someone wants to check a number.
-   ------------------------------------------------------------------ */
+/* while the agent works */
 .stage {
   display: flex; align-items: center; gap: 10px; padding: 2px 0 6px;
   font-size: 11.5px; letter-spacing: .1em; color: var(--ink-dim);
@@ -285,24 +326,27 @@ textarea:focus { outline: none; border-color: var(--gold); background: #fff; }
 }
 .stage .orb::after { animation: pulse 1.6s ease-out infinite; }
 @keyframes pulse { 0% { transform: scale(1); opacity: .65 } 100% { transform: scale(2.8); opacity: 0 } }
-.stage .elapsed { margin-left: auto; font-variant-numeric: tabular-nums; opacity: .45; font-size: 10.5px; }
+.stage .elapsed { margin-left: auto; opacity: .45; font-size: 10.5px;
+                  font-variant-numeric: tabular-nums; }
 .stage.gone { display: none; }
 
 .caret {
   display: inline-block; width: 2px; height: 1.05em; background: var(--gold);
-  vertical-align: -0.16em; margin-left: 1px; animation: blink 1.05s steps(2) infinite;
+  vertical-align: -.16em; margin-left: 1px; animation: blink 1.05s steps(2) infinite;
 }
 @keyframes blink { 0%,50% { opacity: 1 } 50.1%,100% { opacity: 0 } }
 
-/* ---- everything technical, after the fact ---- */
+/* ==================================================================
+   After the answer — copy, and the machinery behind a control
+   ================================================================== */
 .after { display: flex; align-items: center; gap: 16px; margin-top: 12px;
-         opacity: 0; animation: rise .3s ease forwards; }
+         opacity: 0; animation: rise .32s ease forwards; }
 @keyframes rise { to { opacity: 1 } }
 .after button {
   background: none; border: none; padding: 0; cursor: pointer;
-  font-size: 10px; letter-spacing: .16em; text-transform: uppercase;
-  color: var(--ink-dim); display: flex; align-items: center; gap: 6px;
-  transition: color .16s ease; font-family: var(--body);
+  font-family: var(--body); font-size: 10px; letter-spacing: .16em;
+  text-transform: uppercase; color: var(--ink-dim);
+  display: flex; align-items: center; gap: 6px; transition: color .16s ease;
 }
 .after button:hover { color: var(--burgundy); }
 .after .gem { color: var(--gold); font-size: 9px; transition: transform .22s ease; }
@@ -314,54 +358,87 @@ textarea:focus { outline: none; border-color: var(--gold); background: #fff; }
 .details .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
 .details .cap { font-size: 9.5px; letter-spacing: .18em; text-transform: uppercase;
                 color: var(--ink-dim); margin-right: 4px; }
-.pill { font-size: 9.5px; letter-spacing: .12em; text-transform: uppercase;
-        padding: 3px 10px; border: 1px solid var(--rule); color: var(--ink-dim);
-        border-radius: 20px; background: #fff; }
-.pill.who { color: var(--burgundy); border-color: rgba(91,15,26,.25); }
-.pill.tool { color: #8a6d3f; border-color: var(--gold-soft); background: var(--gold-faint); }
+
+.pill {
+  font-size: 9.5px; letter-spacing: .12em; text-transform: uppercase;
+  padding: 3px 10px; border: 1px solid var(--rule); color: var(--ink-dim);
+  border-radius: 20px; background: var(--glass-strong);
+}
+.pill.who { color: var(--burgundy); border-color: rgba(91,15,26,.24); }
+.pill.tool { color: #8A6D3F; border-color: var(--gold-soft); background: var(--gold-faint); }
 
 .q { margin-bottom: 14px; }
 .q .qh { font-size: 9.5px; letter-spacing: .18em; text-transform: uppercase;
          color: var(--ink-dim); margin-bottom: 6px; }
-.q pre { margin: 0; padding: 13px 15px; background: var(--black); color: #d9d4c9;
-         overflow-x: auto; border-radius: 2px;
-         font: 11.5px/1.7 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.q pre {
+  margin: 0; padding: 14px 16px; background: var(--black); color: #D9D4C9;
+  overflow-x: auto; border-radius: 3px; box-shadow: var(--lift);
+  font: 11.5px/1.7 var(--mono);
+}
 .q pre .kw { color: var(--gold); }
 .q .meta { margin-top: 5px; font-size: 10.5px; color: var(--ink-dim); letter-spacing: .04em; }
 .q .meta.warn { color: var(--burgundy); }
-.q .declined { padding: 10px 14px; background: #fbfaf8; border: 1px solid var(--rule);
-               font-size: 12.5px; color: var(--ink-dim); }
+.q .declined { padding: 10px 14px; background: var(--glass-strong);
+               border: 1px solid var(--rule); font-size: 12.5px; color: var(--ink-dim); }
 
-.toast { position: fixed; bottom: 26px; left: 50%;
-         transform: translateX(-50%) translateY(12px);
-         background: var(--black); color: var(--ivory); padding: 12px 20px;
-         font-size: 12.5px; border-radius: 2px; z-index: 50; opacity: 0;
-         transition: all .28s ease; max-width: 520px; pointer-events: none;
-         border-left: 2px solid var(--gold); }
-.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
-.toast.bad { border-left-color: var(--burgundy); }
+.err {
+  border: 1px solid rgba(91,15,26,.28); border-left: 2px solid var(--burgundy);
+  background: rgba(91,15,26,.05); padding: 13px 17px; color: var(--burgundy);
+  border-radius: 0 3px 3px 0;
+}
 
-/* ------------------------------------------------------------------
-   Charts.
+/* ==================================================================
+   Empty state
+   ================================================================== */
+.empty { text-align: center; padding-top: 6vh; }
+.empty .mark { margin: 0 auto 26px; display: block; }
+.empty .big {
+  font-family: var(--display); font-size: 28px; letter-spacing: .05em;
+  color: var(--ink); margin-bottom: 12px; text-wrap: balance;
+}
+.empty .lead {
+  font-size: 9px; letter-spacing: .38em; text-transform: uppercase;
+  color: var(--gold); margin-bottom: 30px;
+}
+.suggest { display: grid; gap: 9px; max-width: 440px; margin: 0 auto; }
+.suggest button {
+  background: var(--glass); border: 1px solid var(--rule); padding: 13px 17px;
+  cursor: pointer; text-align: left; font-size: 13px; color: var(--ink);
+  border-radius: 3px; transition: all .2s ease; box-shadow: var(--lift);
+}
+.suggest button:hover {
+  border-color: var(--gold-soft); background: var(--glass-strong);
+  transform: translateY(-2px); box-shadow: var(--lift-lg);
+}
+@supports (backdrop-filter: blur(1px)) {
+  .suggest button { -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); }
+}
 
-   The palette is derived from the brand and then VALIDATED, not eyeballed.
-   The raw brand colours fail: burgundy sits below the OKLCH lightness band,
-   charcoal has zero chroma, and gold falls under both the chroma floor and
-   3:1 contrast. These are brand-faithful steps clearing all five checks on
-   the ivory and white surfaces alike.
+/* ==================================================================
+   Charts
 
-   Slot 1 carries every single-series chart, which is the common case — a
-   nominal bar chart is one colour and the title says what it is.
-   ------------------------------------------------------------------ */
-.chart { margin: 18px 0 6px; background: #fff; border: 1px solid var(--rule);
-         padding: 18px 18px 14px; }
-.chart h5 { margin: 0 0 2px; font-family: var(--display); font-size: 15px;
+   Palette computed, not chosen: the raw brand colours fail the lightness
+   band, the chroma floor and 3:1 contrast. These are brand-faithful steps
+   that pass all five checks on both surfaces.
+   ================================================================== */
+.chart {
+  margin: 18px 0 6px; background: var(--glass-strong);
+  border: 1px solid var(--rule); border-radius: 4px;
+  padding: 20px 20px 14px; box-shadow: var(--lift);
+}
+@supports (backdrop-filter: blur(1px)) {
+  .chart { background: rgba(255,255,255,.72);
+           -webkit-backdrop-filter: blur(14px) saturate(1.3);
+           backdrop-filter: blur(14px) saturate(1.3); }
+}
+.chart h5 { margin: 0 0 2px; font-family: var(--display); font-size: 15.5px;
             font-weight: 500; letter-spacing: .02em; color: var(--ink); }
 .chart .sub { font-size: 10px; letter-spacing: .16em; text-transform: uppercase;
               color: var(--ink-dim); margin-bottom: 14px; }
 .chart svg { display: block; width: 100%; height: auto; overflow: visible; }
-.chart .axis { stroke: var(--rule); stroke-width: 1; }
-.chart .tick { fill: var(--ink-dim); font-size: 10px; letter-spacing: .04em; }
+.chart .axis { stroke: var(--rule-strong); stroke-width: 1; }
+.chart .tick { fill: var(--ink-dim); font-size: 10px; letter-spacing: .04em;
+               font-variant-numeric: tabular-nums; }
 .chart .cat { fill: var(--ink-dim); font-size: 10.5px; }
 .chart .val { fill: var(--ink); font-size: 10.5px; font-weight: 500;
               font-variant-numeric: tabular-nums; }
@@ -370,9 +447,11 @@ textarea:focus { outline: none; border-color: var(--gold); background: #fff; }
                       font-size: 10.5px; color: var(--ink-dim); }
 .chart .legend i { width: 10px; height: 10px; border-radius: 2px; display: block; }
 .chart .foot { display: flex; justify-content: flex-end; margin-top: 10px; }
-.chart .foot button { background: none; border: none; cursor: pointer; padding: 0;
+.chart .foot button {
+  background: none; border: none; cursor: pointer; padding: 0;
   font-family: var(--body); font-size: 9.5px; letter-spacing: .16em;
-  text-transform: uppercase; color: var(--ink-dim); }
+  text-transform: uppercase; color: var(--ink-dim); transition: color .16s ease;
+}
 .chart .foot button:hover { color: var(--burgundy); }
 .chart table { width: 100%; border-collapse: collapse; margin-top: 10px; display: none; }
 .chart table.open { display: table; }
@@ -383,13 +462,57 @@ textarea:focus { outline: none; border-color: var(--gold); background: #fff; }
 .chart td.n { text-align: right; font-variant-numeric: tabular-nums; }
 .chart .hit { fill: transparent; cursor: pointer; }
 .chart .rel { position: relative; }
-.chart .tip { position: absolute; pointer-events: none; background: var(--black);
-  color: var(--ivory); padding: 7px 11px; font-size: 11.5px; border-radius: 2px;
+.chart .tip {
+  position: absolute; pointer-events: none; background: rgba(13,13,13,.92);
+  color: var(--ivory); padding: 7px 11px; font-size: 11.5px; border-radius: 3px;
   white-space: nowrap; opacity: 0; transition: opacity .12s ease; z-index: 30;
-  border-left: 2px solid var(--gold); transform: translate(-50%, -120%); }
+  border-left: 2px solid var(--gold); transform: translate(-50%, -120%);
+  box-shadow: var(--lift-lg);
+}
+@supports (backdrop-filter: blur(1px)) {
+  .chart .tip { -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+}
 .chart .tip.show { opacity: 1; }
 
-@media (max-width: 860px) { body { grid-template-columns: 1fr; } aside { display: none; } .log, .composer, header.bar { padding-left: 20px; padding-right: 20px; } }
+/* ==================================================================
+   Toast
+   ================================================================== */
+.toast {
+  position: fixed; bottom: 26px; left: 50%;
+  transform: translateX(-50%) translateY(12px);
+  background: rgba(13,13,13,.9); color: var(--ivory); padding: 13px 20px;
+  font-size: 12.5px; border-radius: 3px; z-index: 50; opacity: 0;
+  transition: all .3s cubic-bezier(.22,.8,.3,1); max-width: 520px;
+  pointer-events: none; border-left: 2px solid var(--gold);
+  box-shadow: var(--lift-lg);
+}
+@supports (backdrop-filter: blur(1px)) {
+  .toast { -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.toast.bad { border-left-color: var(--burgundy); }
+
+.spin { display: inline-block; animation: sp 1.1s linear infinite; color: var(--gold); }
+@keyframes sp { to { transform: rotate(360deg); } }
+
+/* ==================================================================
+   Motion and small screens
+   ================================================================== */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .001ms !important; animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+  }
+  .msg { animation: none; }
+  .suggest button:hover, .send:hover:not(:disabled), .drop:hover { transform: none; }
+}
+
+@media (max-width: 900px) {
+  body { grid-template-columns: 1fr; }
+  aside { display: none; }
+  .log { padding-left: 20px; padding-right: 20px; }
+  .composer, header.bar { padding-left: 20px; padding-right: 20px; }
+}
 </style>
 </head>
 <body>
