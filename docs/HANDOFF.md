@@ -1,6 +1,14 @@
 # marq-agent — handoff
 
-State as of `dev`, 18 August 2026 (API layer added later the same day).
+State as of `dev`, 19 August 2026.
+Read this first in a new session; it replaces having the previous conversation.
+
+**Where things stand.** The agent is reachable over HTTP, has a local UI in
+the brand, answers greetings, searches the web, draws charts, and keeps the
+SQL behind every answer. All suites green. The two things blocking real use
+are unchanged and are not code: **no CRM credentials**, and **row-level
+security is written but unapplied**, so every authenticated user can still
+read every row.
 Read this first in a new session; it replaces having the previous conversation.
 
 ---
@@ -169,9 +177,9 @@ python scripts/generate_fixture.py --stats
 
 | Suite | Result | Was (16 Aug) |
 |---|---|---|
-| `pytest` | 707/707 | 252 |
-| `pytest -m integration` | 124/124 | never run whole |
-| `pytest -m ""` (everything) | 831/831, **93% coverage** | never measured |
+| `pytest` | 822/822 | 252 |
+| `pytest -m integration` | 132/132 | never run whole |
+| `pytest -m ""` (everything) | 954/954 | never measured |
 | `ruff check .` | clean | clean |
 | `evals.routing_cases` | 37/37 ×3 runs | 37/37 |
 | `evals.graph_cases` | 18/18 ×3 runs | 12/15 |
@@ -723,8 +731,8 @@ failed; reverting is one rule in `LEADS_RULES_ONLY`.
 | `evals.run` | 35/35 x3 |
 | `evals.routing_cases` | 37/37 x3 |
 | `evals.workspace_cases` | 8/8 x3 |
-| `pytest` | 722/722 |
-| `pytest -m integration` | 124/124 |
+| `pytest` | 822/822 |
+| `pytest -m integration` | 132/132 |
 
 **One caveat on the suite itself.** `conversion_within_qualified_leads_only`
 names `converted_at` explicitly rather than asking "have they converted",
