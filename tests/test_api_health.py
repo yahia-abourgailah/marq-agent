@@ -10,6 +10,8 @@ readiness reports what a dependency *can do*.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from app.api.schemas import ComponentHealth
@@ -375,3 +377,65 @@ async def test_the_ui_never_shadows_an_api_route(issuer):
     assert "/v1/chat" in paths
     assert "/health/ready" in paths
     assert "/" not in paths  # excluded from the schema, and not an API route
+
+
+# ============================================================
+# Vendored front-end code
+# ============================================================
+
+
+@pytest.mark.asyncio
+async def test_the_vendored_library_is_served_from_this_host(issuer):
+    """
+    [claude] The UI animates with Motion, and Motion is served from here
+    rather than from a CDN.
+
+    That is a privacy decision before it is a performance one. This console
+    is a window onto a private CRM, and a `<script src="https://cdn…">`
+    would announce to a third party, on every page load, that an internal
+    tool is being used — as well as putting a public network dependency
+    between an internal user and an internal service.
+    """
+
+    app, _ = build_app(verifier=issuer.verifier())
+
+    async with client(app) as http:
+        response = await http.get("/vendor/motion.min.js")
+
+    assert response.status_code == 200
+    assert len(response.content) > 50_000
+    # The UMD build attaches to window.Motion; a wrong file would not.
+    assert b"Motion" in response.content[:400]
+
+
+@pytest.mark.asyncio
+async def test_the_ui_asks_for_nothing_off_this_host(issuer):
+    """
+    [claude] The one deliberate exception is Google Fonts, which carries
+    the brand's typefaces and predates this. Everything else — scripts
+    especially — must resolve to this origin, or the privacy argument above
+    is decoration.
+
+    Written as a rule rather than a habit because the tempting fix for any
+    future library is a CDN tag, and it would pass every other test here.
+    """
+
+    app, _ = build_app(verifier=issuer.verifier())
+
+    async with client(app) as http:
+        body = (await http.get("/")).text
+
+    scripts = re.findall(r'<script[^>]*\ssrc=["\']([^"\']+)["\']', body)
+
+    assert scripts, "the UI should be loading its vendored library"
+    for src in scripts:
+        assert not src.startswith(("http://", "https://", "//")), (
+            f"{src} is fetched from another host — vendor it into "
+            "static/vendor instead"
+        )
+
+    remote = re.findall(r'(?:href|src)=["\'](https?://[^"\']+)["\']', body)
+    for url in remote:
+        assert "fonts.googleapis.com" in url or "fonts.gstatic.com" in url, (
+            f"unexpected third-party request to {url}"
+        )

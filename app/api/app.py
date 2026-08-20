@@ -29,6 +29,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api.errors import install_error_handlers, new_request_id
 from app.api.routes import chat, health, threads, workspace
@@ -185,7 +186,28 @@ def create_app() -> FastAPI:
     # shadow an API route. Same-origin by construction, which is what
     # keeps it working with `CORS_ORIGINS` empty.
     if settings.serve_ui:
-        index = Path(__file__).parent / "static" / "index.html"
+        static_dir = Path(__file__).parent / "static"
+        index = static_dir / "index.html"
+        vendor = static_dir / "vendor"
+
+        # [claude] Third-party front-end code, served from disk rather than
+        # from a CDN.
+        #
+        # This console is a window onto a private CRM, and a `<script
+        # src="https://cdn…">` would announce to a third party, on every
+        # page load, that an internal tool is being used — as well as
+        # putting a public network dependency between an internal user and
+        # an internal service.
+        #
+        # Mounted on the vendor directory specifically, not on `static`, so
+        # this cannot become an accidental way to serve anything else that
+        # is dropped in beside index.html. See static/vendor/README.md.
+        if vendor.is_dir():
+            api.mount(
+                "/vendor",
+                StaticFiles(directory=vendor),
+                name="vendor",
+            )
 
         if index.is_file():
 

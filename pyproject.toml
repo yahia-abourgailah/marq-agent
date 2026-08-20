@@ -43,7 +43,11 @@ addopts = "-m 'not integration'"
 [tool.ruff]
 line-length = 88
 target-version = "py311"
-extend-exclude = ["tests/fixtures"]
+# [claude] `.claude/` holds vendored third-party skill code — someone
+# else's Python, pinned as shipped. Reformatting it to this repo's rules
+# would only make the next update a merge conflict, and its style is not
+# evidence about anything here.
+extend-exclude = ["tests/fixtures", ".claude"]
 
 [tool.ruff.lint]
 select = [

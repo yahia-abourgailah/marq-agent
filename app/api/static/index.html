@@ -376,8 +376,13 @@ textarea:focus {
 /* ==================================================================
    Conversation
    ================================================================== */
-.msg { margin-bottom: 32px; animation: msgIn .34s cubic-bezier(.22,.8,.3,1) both; }
-@keyframes msgIn { from { opacity: 0; transform: translateY(6px) } to { opacity: 1; transform: none } }
+/* [claude] The entrance moved from a keyframe to a spring — see the
+   Motion note in the script. A cubic-bezier arrives at a constant, slightly
+   mechanical stop; a spring settles, which at this size reads as the
+   message having weight rather than having been faded in. The CSS keeps no
+   animation of its own so the two cannot both run, and a message is fully
+   visible with no library present at all. */
+.msg { margin-bottom: 32px; }
 
 .who { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
 .who .name {
@@ -443,9 +448,12 @@ textarea:focus {
 /* ==================================================================
    After the answer — copy, and the machinery behind a control
    ================================================================== */
-.after { display: flex; align-items: center; gap: 16px; margin-top: 12px;
-         opacity: 0; animation: rise .32s ease forwards; }
-@keyframes rise { to { opacity: 1 } }
+/* [claude] The entrance is Motion's now, so the CSS no longer starts this
+   at `opacity: 0` — with both running, the two fought over the same
+   property and the bar flickered. `rise` stays because the details panel
+   and the token drawer still use it. */
+.after { display: flex; align-items: center; gap: 16px; margin-top: 12px; }
+@keyframes rise { from { opacity: 0 } to { opacity: 1 } }
 .after button {
   background: none; border: none; padding: 0; cursor: pointer;
   font-family: var(--body); font-size: 10px; letter-spacing: .16em;
@@ -557,7 +565,13 @@ textarea:focus {
   text-transform: uppercase; color: var(--ink-dim); transition: color .16s ease;
 }
 .chart .foot button:hover { color: var(--burgundy); }
-.chart table { width: 100%; border-collapse: collapse; margin-top: 10px; display: none; }
+/* [claude] The table scrolls inside its own box at every width. A long
+   category name made the table wider than the column, and without this the
+   *page* scrolled sideways to fit it — breaking the whole layout to show
+   one table. */
+.chart .scroll-x { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.chart table { width: 100%; border-collapse: collapse; margin-top: 10px; display: none;
+               min-width: 260px; }
 .chart table.open { display: table; }
 .chart th, .chart td { text-align: left; padding: 6px 8px;
   border-bottom: 1px solid var(--rule); font-size: 11.5px; }
@@ -599,6 +613,224 @@ textarea:focus {
 .spin { display: inline-block; animation: sp 1.1s linear infinite; color: var(--gold); }
 @keyframes sp { to { transform: rotate(360deg); } }
 
+
+/* ==================================================================
+   Menu button, drawer scrim — the small-screen chrome
+
+   [claude] Below 900px the sidebar used to be `display: none`, which did
+   not make the app responsive so much as amputate it: conversations,
+   files and the identity panel simply ceased to exist, and there was no
+   control anywhere that could bring them back. A phone user could send a
+   message and nothing else.
+
+   It is a drawer now. Same panel, same markup, same brand — moved off
+   canvas and given a way back.
+   ================================================================== */
+.menu-btn {
+  display: none; flex: none; align-items: center; justify-content: center;
+  width: 34px; height: 34px; margin-right: 2px;
+  background: var(--glass-strong); border: 1px solid var(--rule);
+  border-radius: var(--r-sm); cursor: pointer; color: var(--ink);
+  transition: background .16s ease, border-color .16s ease;
+}
+.menu-btn:hover { border-color: var(--gold-soft); background: #fff; }
+.bar-left { display: flex; align-items: center; gap: 12px; min-width: 0; }
+
+.scrim {
+  position: fixed; inset: 0; z-index: 39; background: rgba(13,13,13,.44);
+  opacity: 0; pointer-events: none;
+}
+/* [claude] `opacity: 1` here, not only in the animation.
+   *
+   * The helper's whole contract is that an animation runs *to* the
+   * element's natural resting state, so that a missing library means
+   * "already there" rather than "invisible". The scrim broke that: CSS
+   * declared only `opacity: 0`, so the Web Animations fill reverted to it
+   * the instant the tween finished and the scrim never showed at all. */
+.scrim.open { pointer-events: auto; opacity: 1; }
+@supports (backdrop-filter: blur(1px)) {
+  .scrim { -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px); }
+}
+
+/* ==================================================================
+   Jump to latest
+
+   [claude] Autoscroll used to be unconditional: every token painted
+   called scrollDown(), so scrolling up to re-read an earlier answer while
+   the agent was still writing yanked you back to the bottom on the next
+   frame. Reading the conversation during a turn was impossible.
+
+   Now scrolling up detaches, and this is how you get back. It only
+   appears when you are actually detached, so it costs nothing in the
+   common case.
+   ================================================================== */
+.jump {
+  position: absolute; left: 50%; bottom: calc(var(--composer-h) + 8px);
+  z-index: 7; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 7px;
+  padding: 8px 16px; border-radius: var(--r-pill); cursor: pointer;
+  background: var(--glass-strong); border: 1px solid var(--rule-strong);
+  color: var(--ink); font-family: var(--body);
+  font-size: 10px; letter-spacing: .16em; text-transform: uppercase;
+  box-shadow: var(--lift-lg); opacity: 0; pointer-events: none;
+}
+.jump.show { pointer-events: auto; opacity: 1; }
+.jump:hover { border-color: var(--gold); }
+@supports (backdrop-filter: blur(1px)) {
+  .jump { background: rgba(255,255,255,.8);
+          -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); }
+}
+
+/* ==================================================================
+   Command palette
+
+   [claude] Every action in this console lived in exactly one place on
+   screen, and three of them lived in a sidebar that small screens could
+   not reach. A palette gives all of them one keyboard address (⌘K), which
+   is also the only way to make a drawer-based layout genuinely usable
+   without a pointer.
+   ================================================================== */
+.palette-wrap {
+  position: fixed; inset: 0; z-index: 60; display: none;
+  align-items: flex-start; justify-content: center; padding: 12vh 20px 20px;
+  background: rgba(13,13,13,.34);
+}
+.palette-wrap.open { display: flex; }
+@supports (backdrop-filter: blur(1px)) {
+  .palette-wrap { -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
+}
+.palette {
+  width: 100%; max-width: 560px; max-height: 62vh;
+  display: flex; flex-direction: column; overflow: hidden;
+  background: rgba(245,243,239,.94); border: 1px solid var(--rule-strong);
+  border-radius: var(--r-lg); box-shadow: var(--lift-lg);
+}
+@supports (backdrop-filter: blur(1px)) {
+  .palette { background: rgba(245,243,239,.86);
+             -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); }
+}
+.palette-head { display: flex; align-items: center; gap: 10px;
+                padding: 15px 18px; border-bottom: 1px solid var(--rule); }
+.palette-head .gem { color: var(--gold-ink); font-size: 11px; flex: none; }
+.palette input {
+  flex: 1; border: none; background: none; outline: none;
+  font-family: var(--body); font-size: 15px; color: var(--ink);
+}
+.palette input::placeholder { color: var(--ink-dim); }
+.palette .esc {
+  flex: none; font-size: 9px; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--ink-dim); border: 1px solid var(--rule);
+  border-radius: var(--r-xs); padding: 3px 7px;
+}
+.palette-list { overflow-y: auto; padding: 8px; min-height: 0; }
+.palette-group {
+  font-size: 8.5px; letter-spacing: .24em; text-transform: uppercase;
+  color: var(--ink-dim); padding: 10px 12px 5px;
+}
+.palette-item {
+  display: flex; align-items: center; gap: 11px; width: 100%;
+  padding: 10px 12px; border: none; background: none; cursor: pointer;
+  border-radius: var(--r-sm); text-align: left; font-family: var(--body);
+  font-size: 13.5px; color: var(--ink); border-left: 2px solid transparent;
+}
+.palette-item .pi-mark { color: var(--gold-ink); font-size: 10px; flex: none; }
+.palette-item .pi-text { flex: 1; min-width: 0; overflow: hidden;
+                         text-overflow: ellipsis; white-space: nowrap; }
+.palette-item .pi-key {
+  flex: none; font-size: 9.5px; letter-spacing: .1em; color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+}
+.palette-item[aria-selected="true"] {
+  background: var(--gold-faint); border-left-color: var(--gold);
+}
+.palette-empty { padding: 26px 12px; text-align: center;
+                 font-size: 12.5px; color: var(--ink-dim); }
+
+/* ==================================================================
+   Message actions, and stopping a turn
+   ================================================================== */
+.after button:disabled { opacity: .4; cursor: not-allowed; }
+.after .sep { width: 1px; height: 11px; background: var(--rule-strong); flex: none; }
+
+.msg .edit-box { display: flex; flex-direction: column; gap: 9px; }
+.msg .edit-box textarea {
+  background: #fff; border: 1px solid var(--gold); border-radius: var(--r);
+  box-shadow: 0 0 0 3px rgba(203,164,110,.16);
+  padding: 13px 16px; font: 400 14px/1.6 var(--body); color: var(--ink);
+  resize: none; max-height: 240px;
+}
+.msg .edit-box textarea:focus { outline: none; }
+.msg .edit-actions { display: flex; gap: 10px; justify-content: flex-end; }
+.msg .edit-actions button {
+  cursor: pointer; font-family: var(--body); font-size: 9.5px;
+  letter-spacing: .16em; text-transform: uppercase; padding: 7px 14px;
+  border-radius: var(--r-sm); transition: all .18s ease;
+}
+.msg .edit-actions .ok { border: none; background: var(--burgundy); color: var(--gold); }
+.msg .edit-actions .ok:hover { background: var(--black); }
+.msg .edit-actions .no { background: none; border: 1px solid var(--rule-strong);
+                         color: var(--ink-dim); }
+.msg .edit-actions .no:hover { border-color: var(--ink-dim); color: var(--ink); }
+
+.send.stopping { background: var(--charcoal); color: var(--ivory); }
+.send.stopping:hover:not(:disabled) { background: var(--burgundy); color: var(--gold); }
+
+/* ==================================================================
+   Skeletons — reserved space, not a spinner
+
+   [claude] The sidebar lists rendered as nothing until their fetch
+   resolved, so a cold load showed an empty panel that was
+   indistinguishable from "you have no conversations". These hold the
+   shape instead, which is also what keeps the layout from jumping when
+   the rows arrive.
+   ================================================================== */
+.skel { padding: 10px 12px; display: flex; flex-direction: column; gap: 12px; }
+.skel i {
+  display: block; height: 11px; border-radius: var(--r-xs);
+  background: linear-gradient(90deg,
+    rgba(245,243,239,.05) 0%, rgba(245,243,239,.11) 50%, rgba(245,243,239,.05) 100%);
+  background-size: 200% 100%; animation: shim 1.4s ease-in-out infinite;
+}
+.skel i:nth-child(2) { width: 74%; }
+.skel i:nth-child(3) { width: 58%; }
+@keyframes shim { to { background-position: -200% 0 } }
+
+/* ==================================================================
+   Charts — accessible beyond colour
+
+   [claude] The palette was already computed to clear 3:1 against both
+   surfaces, but every series was still identified *only* by its colour,
+   which is the one channel a colour-blind reader does not have. Each
+   series now also carries a hatch, and the table under every chart is
+   reachable by keyboard rather than by hovering a mark.
+   ================================================================== */
+.chart .hit:focus-visible { outline: 2px solid var(--gold); outline-offset: 1px; }
+.chart .legend i { position: relative; overflow: hidden; }
+.chart .foot { gap: 16px; }
+.chart .axis-title {
+  fill: var(--ink-dim); font-size: 9.5px; letter-spacing: .16em;
+  text-transform: uppercase;
+}
+.chart table:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+.chart caption {
+  caption-side: top; text-align: left; font-size: 9.5px; letter-spacing: .16em;
+  text-transform: uppercase; color: var(--ink-dim); padding-bottom: 6px;
+}
+
+/* Screen-reader-only, for the live region and the skip link. */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+.skip {
+  position: absolute; left: 50%; top: -60px; transform: translateX(-50%);
+  z-index: 100; background: var(--black); color: var(--gold);
+  padding: 11px 20px; border-radius: 0 0 var(--r) var(--r);
+  font-size: 11px; letter-spacing: .14em; text-transform: uppercase;
+  transition: top .18s ease;
+}
+.skip:focus { top: 0; }
+
 /* ==================================================================
    Motion and small screens
    ================================================================== */
@@ -611,17 +843,182 @@ textarea:focus {
   .suggest button:hover, .send:hover:not(:disabled), .drop:hover { transform: none; }
 }
 
-@media (max-width: 900px) {
-  body { grid-template-columns: 1fr; }
-  aside { display: none; }
-  .log { padding-left: 20px; padding-right: 20px; }
-  .composer, header.bar { padding-left: 20px; padding-right: 20px; }
+/* ------------------------------------------------------------------
+   Responsive.
+
+   [claude] Four steps, and the one that matters is 900px, where the
+   sidebar stops being a column and becomes a drawer. It used to be
+   `display: none` — the app did not adapt to a small screen so much as
+   lose three of its four features on one.
+
+   Checked at 375, 768, 1024 and 1440. The rule the layout has to keep at
+   every width: the composer stays reachable, and nothing scrolls
+   sideways.
+   ------------------------------------------------------------------ */
+
+/* Large desktop — the column can afford to breathe, and so can the text. */
+@media (min-width: 1440px) {
+  body { grid-template-columns: 324px 1fr; gap: 16px; padding: 16px; }
+  .wrap { max-width: 760px; }
+  .log { padding-left: 56px; padding-right: 56px; }
+  .composer, header.bar { padding-left: 56px; padding-right: 56px; }
 }
+
+/* Small desktop / large tablet — narrow the chrome, never the content. */
+@media (max-width: 1180px) and (min-width: 901px) {
+  body { grid-template-columns: 264px 1fr; }
+  .log { padding-left: 30px; padding-right: 30px; }
+  .composer, header.bar { padding-left: 30px; padding-right: 30px; }
+  .brand { padding: 20px 18px 14px; }
+}
+
+/* ---- the drawer threshold ---- */
+@media (max-width: 900px) {
+  body {
+    grid-template-columns: 1fr;
+    padding: 10px; gap: 0;
+    /* [claude] dvh, not vh: on iOS Safari `100vh` is the height with the
+       address bar *hidden*, so at rest the composer sat below the fold and
+       the send button could not be reached at all. */
+    height: 100dvh;
+  }
+
+  .menu-btn { display: flex; }
+
+  /* Same panel, moved off canvas. Motion drives the transform; these are
+     the resting positions it animates between. */
+  aside {
+    position: fixed; top: 0; bottom: 0; left: 0; z-index: 40;
+    width: min(322px, 86vw); border-radius: 0;
+    transform: translateX(-100%);
+    box-shadow: 0 0 60px -10px rgba(13,13,13,.5);
+  }
+  aside.open { transform: none; }
+
+  main { border-radius: var(--r); }
+  header.bar { border-radius: var(--r) var(--r) 0 0; padding: 0 16px; }
+  .composer { border-radius: 0 0 var(--r) var(--r); padding: 12px 16px 14px; }
+  .log { padding-left: 18px; padding-right: 18px; }
+  .empty { padding-top: 3vh; }
+  .empty .big { font-size: 24px; }
+}
+
+/* ---- phone ---- */
+@media (max-width: 560px) {
+  :root { --header-h: 56px; --composer-h: 124px; }
+  body { padding: 0; }
+  main { border-radius: 0; border-left: none; border-right: none; }
+  header.bar, .composer { border-radius: 0; }
+  .log { padding-left: 14px; padding-right: 14px; }
+
+  /* The send button's label is the thing that has to give, not its target
+     size — 44×44 is the floor and this stays above it. */
+  .send { width: 62px; padding: 12px 0; letter-spacing: .1em; font-size: 9px; }
+  .composer .wrap { gap: 8px; }
+  .foot { display: none; }
+
+  header.bar .title { font-size: 15px; }
+  .status .label { display: none; }
+  .status { padding: 7px 9px; }
+
+  .msg { margin-bottom: 26px; }
+  .msg.agent .bubble { font-size: 14px; line-height: 1.75; }
+  .empty .big { font-size: 21px; }
+  .empty .lead { letter-spacing: .28em; font-size: 8.5px; }
+  .suggest button { font-size: 12.5px; padding: 12px 15px; }
+
+  .chart { padding: 15px 13px 11px; border-radius: var(--r); }
+  .chart .foot { gap: 12px; flex-wrap: wrap; justify-content: flex-start; }
+
+  .palette-wrap { padding: 8vh 12px 12px; }
+  .palette { max-height: 74vh; }
+  .after { gap: 12px; flex-wrap: wrap; }
+}
+
+/* ---- very small phone (375px and below) ---- */
+@media (max-width: 380px) {
+  .log { padding-left: 11px; padding-right: 11px; }
+  header.bar, .composer { padding-left: 11px; padding-right: 11px; }
+  .empty .big { font-size: 19px; }
+  .send { width: 54px; }
+}
+
+/* Landscape phone: almost no vertical room, so the empty state's air goes. */
+@media (max-height: 460px) and (max-width: 900px) {
+  .empty { padding-top: 0; }
+  .empty .mark { height: 54px; margin-bottom: 12px; }
+  .empty .big { font-size: 18px; margin-bottom: 6px; }
+  .empty .lead { margin-bottom: 16px; }
+}
+
+/* ------------------------------------------------------------------
+   Coarse pointers get real targets.
+
+   [claude] 44×44 is the floor, and the controls here are deliberately
+   small: a 12px delete cross and a 10px "Details" link are right for a
+   mouse and unusable with a thumb. Growing them to 44px on touch would
+   mean designing the panel twice.
+
+   So the *hit area* grows and the *mark* does not. An absolutely
+   positioned `::after` on a relatively positioned control extends what is
+   clickable well past what is drawn, without occupying any layout space —
+   which is what lets the same sidebar work under both pointers.
+
+   The one thing this cannot do on its own is keep targets apart. Two 12px
+   controls 16px apart, each grown to 44px, overlap — so wherever a hit
+   area is widened, the gap between the controls is widened with it, and
+   the 8px minimum separation is what decides by how much.
+   ------------------------------------------------------------------ */
+@media (pointer: coarse) {
+  .thread { padding: 13px 12px; }
+
+  /* The row's label fills the row's height rather than sitting in the
+     middle of it, so the whole band opens the conversation. */
+  .thread .t { padding: 12px 0; margin: -12px 0; }
+
+  .thread .kill, .file-row .kill { opacity: 1; }
+
+  /* Small marks, large targets. */
+  .kill, .icon, .after button, .chart .foot button, .who-btn .chev {
+    position: relative;
+  }
+  .kill::after, .icon::after {
+    content: ""; position: absolute; top: 50%; left: 50%;
+    width: 44px; height: 44px; transform: translate(-50%, -50%);
+  }
+  .after button::after, .chart .foot button::after {
+    /* -16px vertical on a 12px label is exactly the 44px floor. */
+    content: ""; position: absolute; inset: -16px -7px;
+  }
+
+  /* Widened so the enlarged hit areas above keep 8px between them. */
+  .after, .chart .foot { gap: 26px; }
+
+  .icon { padding: 9px 10px; margin: -7px -6px; }
+  .drop { padding: 20px 12px; }
+
+  /* Controls that can simply be big enough. */
+  .send, .menu-btn, .jump, .primary, .palette-item { min-height: 44px; }
+  .menu-btn { width: 44px; }
+  .file-row { padding: 11px 0; }
+}
+
 </style>
 </head>
 <body>
 
-<aside>
+<a class="skip" href="#input">Skip to the composer</a>
+
+<!-- [claude] Announcements for a screen reader, and only announcements.
+     The answer streams a character at a time; piping that into a live
+     region would read the same sentence dozens of times over. So state
+     changes are spoken here — asking, answering, done, failed — and the
+     answer itself is read from the log when it has settled. -->
+<div class="sr-only" id="announce" role="status" aria-live="polite"></div>
+
+<div class="scrim" id="scrim" hidden></div>
+
+<aside id="sidebar">
   <!-- [claude] Restructured. The brand block used to take 380px before
        anything functional, a raw password field sat in the most prominent
        position, and the lower half was dead space. Now: mark, primary
@@ -689,14 +1086,28 @@ textarea:focus {
 
 <main>
   <header class="bar">
-    <div class="title">Agent</div>
+    <div class="bar-left">
+      <button class="menu-btn" id="menu" aria-label="Show conversations and files"
+              aria-expanded="false" aria-controls="sidebar">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="1.6" stroke-linecap="round"
+             aria-hidden="true">
+          <path d="M4 7h16M4 12h16M4 17h16"/>
+        </svg>
+      </button>
+      <div class="title">Agent</div>
+    </div>
     <div class="status" id="status">
       <span class="dot" id="health"></span>
       <span class="label" id="healthText">checking</span>
     </div>
   </header>
 
-  <div class="log" id="log">
+  <button class="jump" id="jump" hidden>
+    <span aria-hidden="true">↓</span> Latest
+  </button>
+
+  <div class="log" id="log" role="log" aria-label="Conversation">
     <div class="wrap"><div class="empty" id="empty">
       <svg class="mark" width="34" height="100" viewBox="0 0 34 100" fill="none"
            stroke="#CBA46E" stroke-width="1">
@@ -712,13 +1123,36 @@ textarea:focus {
 
   <div class="composer">
     <div class="wrap">
-      <textarea id="input" rows="1" placeholder="Ask about deals, leads, or a file you uploaded…"></textarea>
+      <textarea id="input" rows="1" aria-label="Ask a question"
+                aria-describedby="composerHint"
+                placeholder="Ask about deals, leads, or a file you uploaded…"></textarea>
       <button class="send" id="send">Send</button>
     </div>
-    <div class="foot">Enter to send · Shift + Enter for a new line</div>
+    <div class="foot" id="composerHint">
+      Enter to send · Shift + Enter for a new line · ⌘K for commands
+    </div>
   </div>
 </main>
 
+<!-- [claude] The command palette. Hidden until ⌘K, and the only place
+     every action in this console shares one address — which is what makes
+     the drawer layout usable without a pointer. -->
+<div class="palette-wrap" id="paletteWrap" hidden>
+  <div class="palette" role="dialog" aria-modal="true" aria-label="Commands">
+    <div class="palette-head">
+      <span class="gem" aria-hidden="true">◇</span>
+      <input id="paletteInput" type="text" placeholder="Search commands and conversations…"
+             autocomplete="off" spellcheck="false" role="combobox"
+             aria-expanded="true" aria-controls="paletteList" aria-autocomplete="list">
+      <span class="esc">Esc</span>
+    </div>
+    <div class="palette-list" id="paletteList" role="listbox" aria-label="Results"></div>
+  </div>
+</div>
+
+<!-- Motion 13.1.1 (formerly Framer Motion), MIT, served from this host
+     rather than a CDN — see static/vendor/README.md for why. -->
+<script src="/vendor/motion.min.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
 let threadId = null, busy = false;
@@ -729,6 +1163,251 @@ const SUGGESTIONS = [
   "Among qualified leads, how many have gone stale?",
   "What is the total unit area across all contracted deals?",
 ];
+
+/* ==================================================================
+   Motion
+
+   [claude] A thin layer over the vendored library rather than calls to it
+   scattered through the file, for two reasons.
+
+   The first is that motion here has to be optional. `motion.min.js` is one
+   more file that can 404, be blocked, or fail to parse, and an interface
+   whose messages are invisible because an animation library did not load
+   is far worse than one that never animated. So every helper below either
+   animates or does nothing — it never leaves an element mid-transition,
+   and it never sets a starting style the library would have had to clear.
+   Animations run *from* a value *to* the element's natural state, so the
+   resting state is what CSS already says.
+
+   The second is `prefers-reduced-motion`. The CSS honours it for the
+   stylesheet's own transitions, but a JavaScript animation is invisible to
+   that rule and would keep moving — the one place the setting is most
+   likely to matter. It is checked here, once, for everything.
+   ------------------------------------------------------------------
+   Durations follow the same idea the rest of the file does: entrances are
+   slower than exits, because a thing arriving should be noticed and a
+   thing leaving should get out of the way.
+   ================================================================== */
+const MOTION = window.Motion || null;
+const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+const canAnimate = () => !!(MOTION && MOTION.animate) && !reduceMotion.matches;
+
+const EASE_OUT = [0.22, 0.8, 0.3, 1];
+const SPRING_SOFT = { type: "spring", stiffness: 320, damping: 34, mass: 0.9 };
+const SPRING_SNAP = { type: "spring", stiffness: 520, damping: 38, mass: 0.7 };
+
+/* Animate, or hand the element back to CSS.
+ *
+ * [claude] The `return null` case has to *undo*, not merely skip.
+ *
+ * A finished Motion animation commits its end value as an inline style, so
+ * an element that has been hidden once carries `opacity: 0` on the element
+ * itself. That inline value outranks any stylesheet rule. When animation
+ * is then switched off — reduced motion turned on mid-session, or the
+ * library failing to load on a later page — the show path had nothing to
+ * clear it, and the control stayed invisible with every class correctly
+ * applied. The jump-to-latest button did exactly this.
+ *
+ * So the no-animation branch strips the inline properties this call would
+ * have written, which drops the element back to whatever CSS says its
+ * resting state is. That is the same contract the animating branch keeps;
+ * it just gets there in one frame. */
+function anim(el, keyframes, options) {
+  if (!el) return null;
+
+  if (!canAnimate()) {
+    Object.keys(keyframes || {}).forEach(prop => el.style.removeProperty(prop));
+    return null;
+  }
+
+  try { return MOTION.animate(el, keyframes, options); }
+  catch (e) { console.warn("motion failed", e); return null; }
+}
+
+/* Run `after` once an exit animation has had time to finish.
+ *
+ * [claude] On a timer, not on the animation's own promise, and that is
+ * load-bearing. Motion returns controls carrying a `finished` promise, and
+ * measured here it does not reliably settle — a 120ms tween still had an
+ * unresolved `finished` after 700ms. Anything hanging off it therefore
+ * never ran.
+ *
+ * That was not a cosmetic failure. `showJump(false)` set `hidden = true`
+ * inside that callback, so the button never actually hid; the next call to
+ * show it hit the "already in this state" guard and returned without doing
+ * anything, and jump-to-latest silently stopped working for the rest of
+ * the session.
+ *
+ * So whichever comes first wins: the promise if it resolves, the timer if
+ * it does not. State changes are never left waiting on a library's
+ * bookkeeping. */
+function afterExit(controls, ms, after) {
+  if (!controls) { after(); return; }
+
+  let done = false;
+  const finish = () => { if (!done) { done = true; after(); } };
+
+  Promise.resolve(controls.finished).then(finish).catch(finish);
+  setTimeout(finish, ms + 60);
+}
+
+/* An entrance. Safe by construction: the element's resting state is the
+   end of every keyframe list, so a missing library means "already there". */
+const enter = (el, opts = {}) =>
+  anim(el, { opacity: [0, 1], transform: ["translateY(7px)", "translateY(0px)"] },
+       { duration: 0.34, ease: EASE_OUT, ...opts });
+
+/* A list, arriving in sequence. Capped because a stagger over 40 rows is
+   not choreography, it is a wait — past about ten the eye reads it as the
+   interface being slow. */
+function enterList(nodes, each = 0.035) {
+  const list = Array.from(nodes || []);
+  if (!list.length || !canAnimate()) return;
+  list.forEach((el, i) =>
+    enter(el, { delay: Math.min(i * each, 0.36), duration: 0.3 }));
+}
+
+/* ==================================================================
+   Announcements
+
+   Spoken state, never spoken tokens — see the note on #announce in the
+   markup.
+   ================================================================== */
+let lastSaid = "";
+function announce(text) {
+  const box = $("announce");
+  if (!box || text === lastSaid) return;
+  lastSaid = text;
+  box.textContent = text;
+}
+
+/* ==================================================================
+   Scrolling
+
+   [claude] The old rule was "after anything changes, go to the bottom",
+   which meant scrolling up to re-read something during a turn was undone
+   by the next token. This keeps the same behaviour while you are at the
+   bottom — which is almost always — and gets out of the way the moment
+   you are not.
+
+   `pinned` is a state, not a guess: it is set by the scroll event and only
+   re-armed when you return to the bottom yourself, or press the button.
+   ================================================================== */
+const PIN_SLACK = 64;   // px from the bottom that still counts as "at the bottom"
+let pinned = true;
+
+function atBottom() {
+  const el = $("log");
+  return el.scrollHeight - el.scrollTop - el.clientHeight <= PIN_SLACK;
+}
+
+// [claude] Tracked in a variable rather than read back off `hidden`.
+// Deriving "am I already showing?" from the attribute meant one missed
+// write left the guard permanently wrong — see afterExit.
+let jumpShown = false;
+
+function showJump(show) {
+  const b = $("jump");
+  if (!b || show === jumpShown) return;
+  jumpShown = show;
+
+  if (show) {
+    b.hidden = false;
+    b.classList.add("show");
+    anim(b, { opacity: [0, 1], transform: ["translate(-50%, 8px)", "translate(-50%, 0px)"] },
+         { duration: 0.24, ease: EASE_OUT });
+  } else {
+    b.classList.remove("show");
+    const out = anim(b, { opacity: [1, 0], transform: ["translate(-50%, 0px)", "translate(-50%, 6px)"] },
+                     { duration: 0.16, ease: "linear" });
+    afterExit(out, 160, () => { if (!jumpShown) b.hidden = true; });
+  }
+}
+
+/* Only scrolls when the reader has not taken over. */
+function scrollDown(force = false) {
+  const el = $("log");
+  if (!el) return;
+  if (force) { pinned = true; showJump(false); }
+  if (!pinned) return;
+  el.scrollTop = el.scrollHeight;
+}
+
+$("log").addEventListener("scroll", () => {
+  const bottom = atBottom();
+  if (bottom !== pinned) {
+    pinned = bottom;
+    showJump(!bottom);
+  }
+}, { passive: true });
+
+$("jump").onclick = () => { scrollDown(true); $("input").focus(); };
+
+/* ==================================================================
+   The sidebar as a drawer
+
+   Below 900px the panel is off canvas. Opening it is a focus change as
+   much as a visual one: a drawer that traps nothing and returns focus
+   nowhere is a keyboard dead end.
+   ================================================================== */
+const isDrawer = () => window.matchMedia("(max-width: 900px)").matches;
+let drawerOpen = false, drawerReturn = null;
+
+function setDrawer(open) {
+  if (!isDrawer() && open) return;
+  const aside = $("sidebar"), scrim = $("scrim"), btn = $("menu");
+
+  drawerOpen = open;
+  btn.setAttribute("aria-expanded", String(open));
+  aside.classList.toggle("open", open);
+
+  if (open) {
+    drawerReturn = document.activeElement;
+    scrim.hidden = false;
+    scrim.classList.add("open");
+    anim(scrim, { opacity: [0, 1] }, { duration: 0.2, ease: "linear" });
+    anim(aside, { transform: ["translateX(-100%)", "translateX(0px)"] }, SPRING_SNAP);
+    // The first thing in the panel, so the panel is where you are.
+    ($("new") || aside).focus({ preventScroll: true });
+  } else {
+    scrim.classList.remove("open");
+    const fade = anim(scrim, { opacity: [1, 0] }, { duration: 0.16, ease: "linear" });
+    afterExit(fade, 160, () => { if (!drawerOpen) scrim.hidden = true; });
+    anim(aside, { transform: ["translateX(0px)", "translateX(-100%)"] },
+         { duration: 0.22, ease: EASE_OUT });
+    if (drawerReturn && document.contains(drawerReturn)) drawerReturn.focus({ preventScroll: true });
+    drawerReturn = null;
+  }
+}
+
+$("menu").onclick = () => setDrawer(!drawerOpen);
+$("scrim").onclick = () => setDrawer(false);
+
+/* Keep the two layouts from contradicting each other: growing past the
+   threshold leaves the panel in the column, where "open" is meaningless. */
+window.matchMedia("(max-width: 900px)").addEventListener("change", (e) => {
+  if (!e.matches && drawerOpen) {
+    drawerOpen = false;
+    $("sidebar").classList.remove("open");
+    $("sidebar").style.transform = "";
+    $("scrim").hidden = true;
+    $("scrim").classList.remove("open");
+    $("menu").setAttribute("aria-expanded", "false");
+  }
+});
+
+/* A drawer is modal, so Tab must not walk out the back of it. */
+function trapTab(e, container) {
+  if (e.key !== "Tab") return;
+  const focusable = container.querySelectorAll(
+    'button, [href], input, textarea, select, [tabindex]:not([tabindex="-1"])'
+  );
+  const items = Array.from(focusable).filter(el => el.offsetParent !== null);
+  if (!items.length) return;
+  const first = items[0], last = items[items.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+}
 
 /* ---------------- token ---------------- */
 $("token").value = localStorage.getItem("marq_token") || "";
@@ -805,10 +1484,15 @@ function bubble(role, text) {
   if (role === "agent" && text) b.innerHTML = renderMarkdown(text);
   else b.textContent = text || "";
   $("log").querySelector(".wrap").appendChild(el);
+
+  if (role === "user" && text) addUserActions(el, text);
+
+  anim(el, { opacity: [0, 1], transform: ["translateY(8px)", "translateY(0px)"] },
+       SPRING_SOFT);
+
   scrollDown();
   return el;
 }
-const scrollDown = () => { $("log").scrollTop = $("log").scrollHeight; };
 
 /* ------------------------------------------------------------------
    Everything technical, revealed only after the answer settles.
@@ -835,6 +1519,84 @@ function pill(text, cls) {
   return s;
 }
 
+
+/* ==================================================================
+   What you can do with a message that has already been said
+
+   [claude] Copy was the only one, and the two obvious neighbours were
+   missing: asking the same thing again when an answer routed badly, and
+   fixing a typo without retyping the sentence.
+
+   Neither rewrites history, and that is deliberate rather than lazy.
+   Every turn is recorded server-side in `conversation_turns` with the SQL
+   behind it, and this codebase's whole provenance argument is that the
+   record can be checked rather than trusted. A UI that quietly replaced a
+   question with a better one would be showing a transcript that never
+   happened. So Retry asks again as a new turn, and Edit loads the text
+   back into the composer — the thread gains a turn, it never loses one.
+   ================================================================== */
+function actionButton(label, mark, onClick) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.innerHTML = `<span class="gem" aria-hidden="true">${mark}</span> <span class="t"></span>`;
+  b.querySelector(".t").textContent = label;
+  b.onclick = onClick;
+  return b;
+}
+
+function addActions(el, { answer, question }, bar) {
+  const own = !bar;
+  bar = bar || document.createElement("div");
+  if (own) bar.className = "after";
+
+  el.dataset.answer = answer || "";
+
+  const copy = actionButton("Copy", "◇", async () => {
+    const t = copy.querySelector(".t");
+    try {
+      await navigator.clipboard.writeText(el.dataset.answer || "");
+      t.textContent = "Copied";
+      anim(copy, { transform: ["scale(.94)", "scale(1)"] }, SPRING_SNAP);
+      setTimeout(() => { t.textContent = "Copy"; }, 1600);
+    } catch { toast("Could not copy to the clipboard", true); }
+  });
+  bar.appendChild(copy);
+
+  const q = question || el.dataset.question;
+  if (q) {
+    bar.appendChild(actionButton("Retry", "↻", () => {
+      if (busy) { toast("Still answering — stop that turn first.", true); return; }
+      send(q);
+    }));
+  }
+
+  if (own) { el.appendChild(bar); enter(bar, { duration: 0.28 }); }
+  return bar;
+}
+
+/* Editing a question puts it back in the composer rather than in place —
+   see the note above on why the transcript is not rewritten. */
+function addUserActions(el, text) {
+  const bar = document.createElement("div");
+  bar.className = "after";
+  bar.appendChild(actionButton("Edit", "✎", () => {
+    if (busy) { toast("Still answering — stop that turn first.", true); return; }
+    const box = $("input");
+    box.value = text;
+    box.focus();
+    box.setSelectionRange(box.value.length, box.value.length);
+    box.style.height = "auto";
+    box.style.height = Math.min(box.scrollHeight, 170) + "px";
+    anim(box, { transform: ["scale(.995)", "scale(1)"] }, SPRING_SNAP);
+    announce("Question loaded into the composer.");
+  }));
+  bar.appendChild(actionButton("Ask again", "↻", () => {
+    if (busy) { toast("Still answering — stop that turn first.", true); return; }
+    send(text);
+  }));
+  el.appendChild(bar);
+}
+
 function attachDetails(el, { specialists, tools, provenance, answer, charts }) {
   // Charts sit with the answer, above the technical detail: they are part
   // of what was said, not part of how it was worked out.
@@ -846,17 +1608,7 @@ function attachDetails(el, { specialists, tools, provenance, answer, charts }) {
   const bar = document.createElement("div");
   bar.className = "after";
 
-  const copy = document.createElement("button");
-  const setCopy = (t) => (copy.innerHTML = `<span class="gem">◇</span> ${t}`);
-  setCopy("Copy");
-  copy.onclick = async () => {
-    try {
-      await navigator.clipboard.writeText(answer || "");
-      setCopy("Copied");
-      setTimeout(() => setCopy("Copy"), 1600);
-    } catch { toast("Could not copy to the clipboard", true); }
-  };
-  bar.appendChild(copy);
+  addActions(el, { answer }, bar);
 
   const rows = [];
   if (specialists && specialists.length) rows.push(["Answered by", specialists.map(labelFor), "who"]);
@@ -905,18 +1657,26 @@ function attachDetails(el, { specialists, tools, provenance, answer, charts }) {
       panel.appendChild(q);
     });
 
+    const sep = document.createElement("span");
+    sep.className = "sep";
+    sep.setAttribute("aria-hidden", "true");
+    bar.appendChild(sep);
+
     const toggle = document.createElement("button");
-    const setToggle = () => (toggle.innerHTML = '<span class="gem">▸</span> Details');
-    setToggle();
+    toggle.type = "button";
+    toggle.innerHTML = '<span class="gem" aria-hidden="true">▸</span> Details';
+    toggle.setAttribute("aria-expanded", "false");
     toggle.onclick = () => {
       const open = panel.classList.toggle("open");
       toggle.classList.toggle("open", open);
-      if (open) scrollDown();
+      toggle.setAttribute("aria-expanded", String(open));
+      if (open) { enter(panel, { duration: 0.26 }); scrollDown(); }
     };
     bar.appendChild(toggle);
   }
 
   el.appendChild(bar);
+  enter(bar, { duration: 0.28 });
   if (panel) el.appendChild(panel);
   scrollDown();
 }
@@ -969,6 +1729,190 @@ function niceMax(v) {
   return Math.ceil(v / mag * 2) / 2 * mag;
 }
 
+
+/* ==================================================================
+   Telling series apart without colour
+
+   [claude] The palette was computed to clear 3:1 against both surfaces,
+   which makes each series *visible*. It does not make them
+   *distinguishable*: to a reader with deuteranopia the burgundy and the
+   green in this palette converge, and every chart here identified its
+   series by colour and nothing else. That is the one chart anti-pattern
+   worth fixing before any other.
+
+   So each series after the first also carries a texture. Applied by
+   walking the finished SVG and swapping any fill that matches a palette
+   entry, rather than by threading a pattern id through four different
+   geometry builders — the mark specs in those functions are measured, and
+   this needs to not touch them.
+
+   Series 0 stays solid on purpose. A chart where everything is hatched is
+   noisier than one where the texture means "this is the other one".
+   ================================================================== */
+let patternSeq = 0;
+
+function patternFor(color, i, uid) {
+  const id = `hatch-${uid}-${i}`;
+  const p = svgEl("pattern", {
+    id, width: 6, height: 6, patternUnits: "userSpaceOnUse",
+  });
+  if (i === 3) p.setAttribute("patternTransform", "rotate(45)");
+  p.appendChild(svgEl("rect", { width: 6, height: 6, fill: color }));
+
+  if (i === 1) {
+    // Diagonal rule.
+    p.appendChild(svgEl("path", {
+      d: "M0 6 L6 0 M-1 1 L1 -1 M5 7 L7 5",
+      stroke: SURFACE, "stroke-width": 1.4, opacity: .78,
+    }));
+  } else if (i === 2) {
+    // Dotted.
+    p.appendChild(svgEl("circle", { cx: 3, cy: 3, r: 1.25, fill: SURFACE, opacity: .82 }));
+  } else if (i === 3) {
+    // Grid, rotated 45° by the pattern transform above.
+    p.appendChild(svgEl("path", {
+      d: "M0 3 H6 M3 0 V6",
+      stroke: SURFACE, "stroke-width": 1.1, opacity: .7,
+    }));
+  }
+  return p;
+}
+
+function applyPatterns(svg) {
+  const uid = ++patternSeq;
+
+  // [claude] The swap happens BEFORE the defs are inserted, and the order
+  // is the entire correctness argument.
+  //
+  // Done the other way round, this walk reaches inside the <defs> it just
+  // added and rewrites each pattern's own background rect — which is
+  // filled with the very palette colour being matched — into a reference
+  // to the pattern it belongs to. A self-referencing pattern is not an
+  // error: it renders as nothing at all, so the second series simply
+  // vanished while every fill attribute still looked correct in the DOM.
+  svg.querySelectorAll("[fill]").forEach(el => {
+    const i = CHART_COLORS.indexOf(el.getAttribute("fill"));
+    if (i > 0) el.setAttribute("fill", `url(#hatch-${uid}-${i})`);
+  });
+
+  const defs = svgEl("defs");
+  CHART_COLORS.forEach((c, i) => { if (i > 0) defs.appendChild(patternFor(c, i, uid)); });
+  svg.insertBefore(defs, svg.firstChild);
+
+  return uid;
+}
+
+/* The legend has to carry the same texture, or it explains a chart that
+   no longer looks like it. */
+function swatchStyle(swatch, i, uid) {
+  swatch.style.background = CHART_COLORS[i % CHART_COLORS.length];
+  const idx = i % CHART_COLORS.length;
+  if (idx === 1) {
+    swatch.style.backgroundImage =
+      `repeating-linear-gradient(45deg, ${SURFACE} 0 1.4px, transparent 1.4px 4.2px)`;
+  } else if (idx === 2) {
+    swatch.style.backgroundImage = `radial-gradient(${SURFACE} 1.1px, transparent 1.2px)`;
+    swatch.style.backgroundSize = "4px 4px";
+  } else if (idx === 3) {
+    swatch.style.backgroundImage =
+      `repeating-linear-gradient(0deg, ${SURFACE} 0 1px, transparent 1px 4px),`
+      + `repeating-linear-gradient(90deg, ${SURFACE} 0 1px, transparent 1px 4px)`;
+  }
+}
+
+/* ==================================================================
+   Taking a chart out of the browser
+
+   [claude] Two exits, because they answer different questions. PNG is for
+   putting a picture in a deck; the values are for checking the arithmetic
+   somewhere else, which is the same argument the provenance panel makes
+   about SQL.
+
+   The PNG path inlines computed styles before serialising. Axis ticks,
+   category text and value labels take their fill and font from the
+   stylesheet, and a serialised SVG carries none of it — exported without
+   this the chart came out with black Times labels on a transparent
+   ground, which looks like a rendering bug rather than an export.
+   ================================================================== */
+const INLINE_PROPS = ["fill", "stroke", "stroke-width", "font-size",
+                      "font-family", "font-weight", "opacity"];
+
+function inlineStyles(source, clone) {
+  const from = source.querySelectorAll("*");
+  const to = clone.querySelectorAll("*");
+  for (let i = 0; i < from.length; i++) {
+    const cs = getComputedStyle(from[i]);
+    let css = "";
+    INLINE_PROPS.forEach(p => {
+      const v = cs.getPropertyValue(p);
+      if (v) css += `${p}:${v};`;
+    });
+    to[i].setAttribute("style", css);
+  }
+}
+
+async function exportPng(svg, title) {
+  const clone = svg.cloneNode(true);
+  const rect = svg.getBoundingClientRect();
+  const w = Math.max(1, Math.round(rect.width));
+  const h = Math.max(1, Math.round(rect.height));
+
+  inlineStyles(svg, clone);
+  clone.setAttribute("width", w);
+  clone.setAttribute("height", h);
+  clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+
+  const blob = new Blob([new XMLSerializer().serializeToString(clone)],
+                        { type: "image/svg+xml;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+
+  try {
+    const img = new Image();
+    await new Promise((ok, fail) => {
+      img.onload = ok;
+      img.onerror = () => fail(new Error("the chart could not be rasterised"));
+      img.src = url;
+    });
+
+    // 2x, so it is not soft on the screen it will be shown on.
+    const scale = 2;
+    const canvas = document.createElement("canvas");
+    canvas.width = w * scale;
+    canvas.height = h * scale;
+    const ctx = canvas.getContext("2d");
+    // The charts are drawn for a light surface; a transparent PNG dropped
+    // on a dark slide would lose every label.
+    ctx.fillStyle = "#FFFFFF";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+    const png = await new Promise(r => canvas.toBlob(r, "image/png"));
+    if (!png) throw new Error("the image could not be encoded");
+
+    const href = URL.createObjectURL(png);
+    const a = document.createElement("a");
+    a.href = href;
+    a.download = (title || "chart").replace(/[^\w\- ]+/g, "").trim().slice(0, 60) + ".png";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(href), 2000);
+    toast("Chart saved as a PNG.");
+  } catch (e) {
+    toast("Could not export this chart: " + e.message, true);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+/* Tab-separated, so it pastes straight into a spreadsheet cell grid. */
+function chartTsv(spec) {
+  const head = ["Category", ...spec.series.map(s => s.name)].join("\t");
+  const rows = spec.labels.map((label, i) =>
+    [label, ...spec.series.map(s => fmtVal(s.values[i], spec.value_suffix))].join("\t"));
+  return [head, ...rows].join("\n");
+}
+
 function renderChart(spec) {
   const box = document.createElement("div");
   box.className = "chart";
@@ -1003,6 +1947,14 @@ function renderChart(spec) {
             : spec.kind === "line"  ? lineSvg(spec, showTip, hideTip)
             : spec.kind === "bar"   ? barSvg(spec, showTip, hideTip)
             :                         columnSvg(spec, showTip, hideTip);
+  const uid = applyPatterns(svg);
+
+  // [claude] The picture is decorative to a screen reader — the table
+  // below carries every value — but it should still say what it is rather
+  // than announcing an unlabelled graphic.
+  svg.setAttribute("role", "img");
+  svg.setAttribute("aria-label",
+    `${spec.title}. ${spec.labels.length} categories. The values follow in a table.`);
   rel.appendChild(svg);
 
   // Legend for two or more series; one series needs none — the title says it.
@@ -1012,7 +1964,7 @@ function renderChart(spec) {
     spec.series.forEach((se, i) => {
       const item = document.createElement("span");
       const swatch = document.createElement("i");
-      swatch.style.background = CHART_COLORS[i % CHART_COLORS.length];
+      swatchStyle(swatch, i, uid);
       item.appendChild(swatch);
       item.appendChild(document.createTextNode(se.name));
       leg.appendChild(item);
@@ -1021,14 +1973,33 @@ function renderChart(spec) {
   }
 
   // Table view — the accessibility floor, and how a number gets checked.
+  //
+  // [claude] Wrapped in its own scroll box. A chart with long category
+  // names produced a table wider than a phone, and the *page* scrolled
+  // sideways to accommodate it — which breaks every other column on the
+  // screen to show one table.
+  const tableBox = document.createElement("div");
+  tableBox.className = "scroll-x";
+
   const table = document.createElement("table");
+  const cap = document.createElement("caption");
+  cap.textContent = spec.title;
+  table.appendChild(cap);
+
   const head = document.createElement("tr");
-  head.innerHTML = "<th>Category</th>" +
-    spec.series.map(se => `<th class="n" style="text-align:right">${se.name}</th>`).join("");
+  head.innerHTML = '<th scope="col">Category</th>' +
+    spec.series.map(se =>
+      `<th class="n" scope="col" style="text-align:right">${mdEscape(se.name)}</th>`).join("");
   table.appendChild(head);
   spec.labels.forEach((label, i) => {
     const tr = document.createElement("tr");
-    const td = document.createElement("td");
+    const td = document.createElement("th");
+    td.setAttribute("scope", "row");
+    td.style.fontWeight = "400";
+    td.style.textTransform = "none";
+    td.style.letterSpacing = "normal";
+    td.style.fontSize = "11.5px";
+    td.style.color = "var(--ink)";
     td.textContent = label;
     tr.appendChild(td);
     spec.series.forEach(se => {
@@ -1040,17 +2011,43 @@ function renderChart(spec) {
     table.appendChild(tr);
   });
 
+  tableBox.appendChild(table);
+
   const foot = document.createElement("div");
   foot.className = "foot";
+
   const toggle = document.createElement("button");
+  toggle.type = "button";
   toggle.textContent = "Show values";
+  toggle.setAttribute("aria-expanded", "false");
   toggle.onclick = () => {
     const open = table.classList.toggle("open");
     toggle.textContent = open ? "Hide values" : "Show values";
+    toggle.setAttribute("aria-expanded", String(open));
+    if (open) { enter(tableBox, { duration: 0.24 }); scrollDown(); }
   };
   foot.appendChild(toggle);
+
+  const copyData = document.createElement("button");
+  copyData.type = "button";
+  copyData.textContent = "Copy data";
+  copyData.onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(chartTsv(spec));
+      copyData.textContent = "Copied";
+      setTimeout(() => { copyData.textContent = "Copy data"; }, 1600);
+    } catch { toast("Could not copy to the clipboard", true); }
+  };
+  foot.appendChild(copyData);
+
+  const png = document.createElement("button");
+  png.type = "button";
+  png.textContent = "Save PNG";
+  png.onclick = () => exportPng(svg, spec.title);
+  foot.appendChild(png);
+
   box.appendChild(foot);
-  box.appendChild(table);
+  box.appendChild(tableBox);
 
   return box;
 }
@@ -1409,14 +2406,48 @@ function sqlHtml(sql) {
   return esc.replace(KEYWORDS, m => `<span class="kw">${m}</span>`);
 }
 
+/* ==================================================================
+   Stopping a turn
+
+   [claude] There was no way to stop one. A question that routed badly, or
+   simply a mistyped one, had to be watched to completion — and a
+   reconciliation is 28 steps, which is a long time to sit in front of an
+   answer you already know is wrong.
+
+   Abort is honest about what it does and does not do: it stops *this
+   client reading the stream*. The server finishes the turn it started and
+   records it, so the conversation history stays true — the partial text
+   is kept on screen and labelled rather than deleted, because a turn that
+   ran and cost money should not vanish just because nobody watched it
+   finish.
+   ================================================================== */
+let currentAbort = null;
+
+function stopTurn() {
+  if (currentAbort) { currentAbort.abort(); currentAbort = null; }
+}
+
+function setSending(on) {
+  busy = on;
+  const b = $("send");
+  b.textContent = on ? "Stop" : "Send";
+  b.classList.toggle("stopping", on);
+  b.setAttribute("aria-label", on ? "Stop generating" : "Send message");
+  $("log").setAttribute("aria-busy", String(on));
+}
+
 /* ---------------- a turn, streamed ---------------- */
 async function send(preset) {
   const text = (preset ?? $("input").value).trim();
   if (!text || busy) return;
   if (!hasToken()) { flashToken(); return; }
 
-  busy = true; $("send").disabled = true;
+  setSending(true);
+  announce("Working on it.");
   $("input").value = ""; $("input").style.height = "auto";
+  // A new question is a return to the bottom — you asked it, you want to
+  // see it answered.
+  scrollDown(true);
   bubble("user", text);
 
   const el = bubble("agent", "");
@@ -1444,11 +2475,19 @@ async function send(preset) {
   const typer = new Typer(body);
   let route = null, plan = [], tools = [], started = false, finished = null;
 
+  // The question that produced this answer, so "Retry" has something to
+  // retry without re-reading the DOM for it.
+  el.dataset.question = text;
+
+  const control = new AbortController();
+  currentAbort = control;
+
   try {
     const res = await fetch("/v1/chat/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json", ...auth() },
       body: JSON.stringify({ message: text, ...(threadId ? { thread_id: threadId } : {}) }),
+      signal: control.signal,
     });
 
     if (!res.ok) {
@@ -1492,6 +2531,7 @@ async function send(preset) {
             endStage();
             const answer = d.answer || typer.shown || "(no answer)";
             body.innerHTML = renderMarkdown(answer);
+            announce("Answer ready.");
             attachDetails(el, {
               specialists: (d.specialists && d.specialists.length)
                 ? d.specialists
@@ -1507,6 +2547,7 @@ async function send(preset) {
 
         else if (event === "error") {
           typer.flush(); endStage();
+          announce("That failed.");
           body.className = "bubble err";
           body.textContent = d.message + (d.request_id ? "  ·  " + d.request_id : "");
         }
@@ -1517,10 +2558,35 @@ async function send(preset) {
 
   } catch (e) {
     typer.flush(); endStage();
-    body.className = "bubble err";
-    body.textContent = "Could not reach the agent — is it running?  (" + e.message + ")";
+
+    if (e.name === "AbortError") {
+      // Kept, not discarded. Whatever arrived is real output from a turn
+      // the server ran; deleting it would misrepresent what happened.
+      announce("Stopped.");
+
+      // [claude] The partial gets the same rendering the finished answer
+      // would have. Only the `final` event used to call renderMarkdown, so
+      // a stopped turn left its text as raw source — asterisks and hashes
+      // on screen, which reads as the agent having malfunctioned rather
+      // than as an answer that was interrupted.
+      if (typer.shown) body.innerHTML = renderMarkdown(typer.shown);
+      const note = document.createElement("div");
+      note.className = "after";
+      note.innerHTML = '<span style="font-size:10px;letter-spacing:.16em;'
+        + 'text-transform:uppercase;color:var(--ink-dim)">Stopped · '
+        + 'the agent finished this turn on the server</span>';
+      el.appendChild(note);
+      enter(note);
+      addActions(el, { answer: typer.shown, question: text });
+    } else {
+      announce("That failed.");
+      body.className = "bubble err";
+      body.textContent = "Could not reach the agent — is it running?  (" + e.message + ")";
+    }
   } finally {
-    busy = false; $("send").disabled = false; $("input").focus();
+    currentAbort = null;
+    setSending(false);
+    if (!paletteOpen && !drawerOpen) $("input").focus();
   }
 }
 
@@ -1532,28 +2598,59 @@ function flashToken() {
 }
 
 /* ---------------- threads ---------------- */
+const SKELETON = '<div class="skel"><i></i><i></i><i></i></div>';
+
 async function loadThreads() {
   if (!hasToken()) return;
+  // [claude] Reserved space rather than an empty panel. A cold load used
+  // to render nothing until the fetch resolved, which is indistinguishable
+  // from "you have no conversations" — and then the rows appeared and the
+  // panel jumped.
+  if (!$("threads").children.length) $("threads").innerHTML = SKELETON;
   try {
     const r = await fetch("/v1/threads?limit=50", { headers: auth() });
-    if (!r.ok) return;
+    if (!r.ok) { $("threads").innerHTML = ""; return; }
     const rows = (await r.json()).conversations;
+    threadsCache = rows;
     $("threads").innerHTML = "";
     rows.forEach(c => {
       const d = document.createElement("div");
       d.className = "thread" + (c.thread_id === threadId ? " active" : "");
       d.innerHTML = `<span class="t"></span><span class="n">${c.turn_count}</span><span class="kill">×</span>`;
       d.querySelector(".t").textContent = c.title || c.thread_id;
-      d.querySelector(".t").onclick = () => openThread(c.thread_id);
-      d.querySelector(".kill").onclick = async (e) => {
+      const open = () => { openThread(c.thread_id); if (drawerOpen) setDrawer(false); };
+      const title = d.querySelector(".t");
+      title.onclick = open;
+      title.tabIndex = 0;
+      title.setAttribute("role", "button");
+      title.onkeydown = (e) => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
+      };
+
+      const kill = d.querySelector(".kill");
+      kill.tabIndex = 0;
+      kill.setAttribute("role", "button");
+      kill.setAttribute("aria-label", "Delete this conversation");
+      const remove = async (e) => {
         e.stopPropagation();
+        // [claude] Animated out before the refetch, so the row leaving is
+        // connected to the click that removed it. Exit is faster than
+        // entry — a thing on its way out should not be waited for.
+        const gone = anim(d, { opacity: [1, 0], transform: ["translateX(0px)", "translateX(-14px)"] },
+                          { duration: 0.16, ease: "linear" });
+        await new Promise(done => afterExit(gone, 160, done));
         await fetch("/v1/threads/" + encodeURIComponent(c.thread_id), { method: "DELETE", headers: auth() });
         if (c.thread_id === threadId) newChat();
         loadThreads();
       };
+      kill.onclick = remove;
+      kill.onkeydown = (e) => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); remove(e); }
+      };
       $("threads").appendChild(d);
     });
-  } catch {}
+    enterList($("threads").children);
+  } catch { $("threads").innerHTML = ""; }
 }
 async function openThread(id) {
   const r = await fetch("/v1/threads/" + encodeURIComponent(id), { headers: auth() });
@@ -1614,6 +2711,7 @@ async function loadFiles() {
     const files = (await r.json()).files;
     $("files").innerHTML = "";
     $("fileCount").textContent = files.length ? String(files.length) : "";
+    if (files.length) $("fileCount").setAttribute("aria-label", files.length + " files");
     files.forEach(f => {
       const shape = f.sheets?.length ? f.sheets[0].row_count + " rows"
                   : (f.page_count ? f.page_count + " pp" : "");
@@ -1627,6 +2725,7 @@ async function loadFiles() {
       };
       $("files").appendChild(d);
     });
+    enterList($("files").children, 0.03);
   } catch {}
 }
 async function upload(file) {
@@ -1675,7 +2774,7 @@ async function health() {
 
 function refreshAll() { health(); loadThreads(); loadFiles(); }
 
-$("send").onclick = () => send();
+$("send").onclick = () => (busy ? stopTurn() : send());
 $("new").onclick = newChat;
 $("refresh").onclick = refreshAll;
 $("input").addEventListener("keydown", e => {
@@ -1684,6 +2783,250 @@ $("input").addEventListener("keydown", e => {
 $("input").addEventListener("input", e => {
   e.target.style.height = "auto";
   e.target.style.height = Math.min(e.target.scrollHeight, 170) + "px";
+});
+
+/* [claude] The full prompt is a sentence, and at 375px it wrapped out of a
+   one-row textarea and was clipped mid-word — which reads as a broken
+   field rather than a hint. CSS cannot shorten placeholder text, so it is
+   swapped here. */
+const PLACEHOLDER_FULL = "Ask about deals, leads, or a file you uploaded…";
+const PLACEHOLDER_SHORT = "Ask about deals or leads…";
+const narrow = window.matchMedia("(max-width: 560px)");
+
+function fitPlaceholder() {
+  $("input").placeholder = narrow.matches ? PLACEHOLDER_SHORT : PLACEHOLDER_FULL;
+}
+narrow.addEventListener("change", fitPlaceholder);
+fitPlaceholder();
+
+
+/* ==================================================================
+   Command palette
+
+   [claude] Actions in this console each had exactly one home on screen,
+   and four of them lived in the sidebar — which, below 900px, is behind a
+   drawer. That made "start a new conversation" a three-gesture operation
+   on a phone and an unreachable one for anybody driving by keyboard.
+
+   The palette is not a shortcut for power users so much as the second
+   route to everything, which is what the drawer made necessary. It also
+   searches conversations, because "the pipeline question from earlier" is
+   a far more natural way to find a thread than scanning a list of
+   truncated titles.
+   ================================================================== */
+let threadsCache = [];
+let paletteOpen = false, paletteIndex = 0, paletteRows = [], paletteReturn = null;
+
+const isMac = /mac|iphone|ipad/i.test(navigator.platform || navigator.userAgent);
+const CMD = isMac ? "⌘" : "Ctrl";
+
+/* Subsequence match, so "nwc" finds "New conversation" — the way every
+   palette worth using behaves. Scored so that a prefix beats a scatter. */
+function fuzzy(needle, hay) {
+  const n = needle.toLowerCase().trim(), h = hay.toLowerCase();
+  if (!n) return 0;
+  if (h.startsWith(n)) return 1000;
+  const at = h.indexOf(n);
+  if (at >= 0) return 700 - at;
+  let i = 0, score = 0, run = 0;
+  for (const ch of h) {
+    if (i < n.length && ch === n[i]) { i++; run++; score += 8 + run * 2; }
+    else run = 0;
+  }
+  return i === n.length ? score : -1;
+}
+
+function paletteActions() {
+  const acts = [
+    { group: "Actions", label: "New conversation", key: CMD + " ⇧ O",
+      run: () => newChat() },
+    { group: "Actions", label: "Upload a file", key: "",
+      run: () => $("file").click() },
+    { group: "Actions", label: "Refresh conversations, files and status", key: "",
+      run: () => refreshAll() },
+    { group: "Actions", label: "Focus the composer", key: "/",
+      run: () => $("input").focus() },
+    { group: "Actions", label: hasToken() ? "Change access token" : "Add an access token",
+      key: "", run: () => { setDrawer(isDrawer()); toggleToken(true); } },
+  ];
+
+  const last = [...document.querySelectorAll(".msg.agent")].pop();
+  if (last) {
+    acts.push({
+      group: "Actions", label: "Copy the last answer", key: "",
+      run: async () => {
+        const text = last.dataset.answer || last.querySelector(".bubble")?.textContent || "";
+        try { await navigator.clipboard.writeText(text); toast("Answer copied."); }
+        catch { toast("Could not copy to the clipboard", true); }
+      },
+    });
+  }
+
+  threadsCache.slice(0, 24).forEach(c => acts.push({
+    group: "Conversations",
+    label: c.title || c.thread_id,
+    key: c.turn_count + (c.turn_count === 1 ? " turn" : " turns"),
+    run: () => openThread(c.thread_id),
+  }));
+
+  SUGGESTIONS.forEach(q => acts.push({
+    group: "Ask", label: q, key: "",
+    run: () => send(q),
+  }));
+
+  return acts;
+}
+
+function renderPalette() {
+  const q = $("paletteInput").value;
+  const list = $("paletteList");
+
+  paletteRows = paletteActions()
+    .map(a => ({ ...a, score: fuzzy(q, a.label) }))
+    .filter(a => a.score >= 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 40);
+
+  if (paletteIndex >= paletteRows.length) paletteIndex = 0;
+  list.innerHTML = "";
+
+  if (!paletteRows.length) {
+    const none = document.createElement("div");
+    none.className = "palette-empty";
+    none.textContent = "Nothing matches that.";
+    list.appendChild(none);
+    return;
+  }
+
+  let group = null;
+  paletteRows.forEach((row, i) => {
+    if (row.group !== group) {
+      group = row.group;
+      const h = document.createElement("div");
+      h.className = "palette-group";
+      h.textContent = group;
+      list.appendChild(h);
+    }
+    const b = document.createElement("button");
+    b.className = "palette-item";
+    b.type = "button";
+    b.setAttribute("role", "option");
+    b.setAttribute("aria-selected", String(i === paletteIndex));
+    b.innerHTML = '<span class="pi-mark" aria-hidden="true">◇</span>'
+                + '<span class="pi-text"></span><span class="pi-key"></span>';
+    b.querySelector(".pi-text").textContent = row.label;
+    b.querySelector(".pi-key").textContent = row.key || "";
+    b.onclick = () => runPalette(i);
+    list.appendChild(b);
+  });
+
+  enterList(list.querySelectorAll(".palette-item"), 0.014);
+}
+
+function movePalette(delta) {
+  if (!paletteRows.length) return;
+  paletteIndex = (paletteIndex + delta + paletteRows.length) % paletteRows.length;
+  const items = $("paletteList").querySelectorAll(".palette-item");
+  items.forEach((el, i) => el.setAttribute("aria-selected", String(i === paletteIndex)));
+  items[paletteIndex]?.scrollIntoView({ block: "nearest" });
+}
+
+function runPalette(i) {
+  const row = paletteRows[i ?? paletteIndex];
+  if (!row) return;
+  setPalette(false);
+  // After the overlay is gone, so focus lands where the action put it.
+  setTimeout(() => row.run(), 0);
+}
+
+function setPalette(open) {
+  const wrap = $("paletteWrap");
+  paletteOpen = open;
+
+  if (open) {
+    paletteReturn = document.activeElement;
+    wrap.hidden = false;
+    wrap.classList.add("open");
+    $("paletteInput").value = "";
+    paletteIndex = 0;
+    renderPalette();
+    anim(wrap, { opacity: [0, 1] }, { duration: 0.14, ease: "linear" });
+    anim(wrap.querySelector(".palette"),
+         { opacity: [0, 1], transform: ["translateY(-10px) scale(.985)", "translateY(0px) scale(1)"] },
+         SPRING_SOFT);
+    $("paletteInput").focus();
+  } else {
+    wrap.classList.remove("open");
+    const out = anim(wrap, { opacity: [1, 0] }, { duration: 0.12, ease: "linear" });
+    afterExit(out, 120, () => { if (!paletteOpen) wrap.hidden = true; });
+    if (paletteReturn && document.contains(paletteReturn)) {
+      paletteReturn.focus({ preventScroll: true });
+    }
+    paletteReturn = null;
+  }
+}
+
+$("paletteInput").addEventListener("input", () => { paletteIndex = 0; renderPalette(); });
+$("paletteWrap").addEventListener("mousedown", (e) => {
+  if (e.target === $("paletteWrap")) setPalette(false);
+});
+$("paletteWrap").addEventListener("keydown", (e) => {
+  if (e.key === "ArrowDown") { e.preventDefault(); movePalette(1); }
+  else if (e.key === "ArrowUp") { e.preventDefault(); movePalette(-1); }
+  else if (e.key === "Enter") { e.preventDefault(); runPalette(); }
+  else if (e.key === "Escape") { e.preventDefault(); setPalette(false); }
+  else trapTab(e, $("paletteWrap"));
+});
+
+/* ==================================================================
+   Keyboard
+
+   One global listener rather than several, so the precedence between
+   Escape's three meanings is written down in one place instead of
+   emerging from listener registration order.
+   ================================================================== */
+document.addEventListener("keydown", (e) => {
+  const typing = /^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName || "");
+
+  // Palette: the one shortcut that works from anywhere, including a field.
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+    e.preventDefault();
+    setPalette(!paletteOpen);
+    return;
+  }
+
+  // New conversation.
+  if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "o") {
+    e.preventDefault();
+    newChat();
+    return;
+  }
+
+  // Send from anywhere in the composer, for people who expect ⌘⏎.
+  if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && typing) {
+    e.preventDefault();
+    send();
+    return;
+  }
+
+  if (e.key === "Escape") {
+    // Most-nested first: palette, then drawer, then a turn in flight.
+    if (paletteOpen) { setPalette(false); return; }
+    if (drawerOpen) { setDrawer(false); return; }
+    if (busy) { e.preventDefault(); stopTurn(); return; }
+    return;
+  }
+
+  // `/` focuses the composer, but only when it is not a character someone
+  // is trying to type.
+  if (e.key === "/" && !typing && !e.metaKey && !e.ctrlKey) {
+    e.preventDefault();
+    $("input").focus();
+  }
+});
+
+$("sidebar").addEventListener("keydown", (e) => {
+  if (drawerOpen) trapTab(e, $("sidebar"));
 });
 
 mountSuggestions();

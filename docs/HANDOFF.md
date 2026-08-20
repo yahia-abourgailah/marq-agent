@@ -1,11 +1,12 @@
 # marq-agent — handoff
 
-State as of `dev`, 20 August 2026.
+State as of `dev`, 21 August 2026.
 Read this first in a new session; it replaces having the previous conversation.
 
 **Where things stand.** The agent is reachable over HTTP, has a local UI in
-the brand, answers greetings, searches the web, draws charts, keeps the SQL
-behind every answer, and now reports how each turn ended rather than letting
+the brand — now animated, responsive down to 375px, keyboard-driven and
+touch-legal — answers greetings, searches the web, draws charts, keeps the
+SQL behind every answer, and reports how each turn ended rather than letting
 an out-of-steps run pass for an answer. All suites green. The two things blocking real use
 are unchanged and are not code: **no CRM credentials**, and **row-level
 security is written but unapplied**, so every authenticated user can still
@@ -152,7 +153,7 @@ Note: bare `python` may not be on PATH; the venv interpreter is
 `.venv/bin/python`.
 
 ```bash
-pytest                          # 849 hermetic, ~10s
+pytest                          # 851 hermetic, ~10s
 pytest -m "" --cov=app --cov-report=term-missing   # everything, 93%
 pytest -m integration           # 132, needs live model + PostgreSQL, ~3min
 python -m evals.run             # 35 SQL cases
@@ -594,6 +595,113 @@ content from a file a third party wrote, so it is never trusted as HTML.
 
 `SERVE_UI=false` removes the route. Off in production, where the front end is
 the company website.
+
+### The 21 August pass — motion, reach, and touch
+
+Still one file, still no build step. What changed:
+
+**Motion, vendored.** `static/vendor/motion.min.js` is Motion 13.1.1 — the
+library formerly published as Framer Motion — as its own UMD build, copied
+from npm and served by this API. Not from a CDN, and that is a privacy
+decision before it is a performance one: a `<script src="https://cdn…">`
+would announce to a third party, on every page load, that an internal CRM
+tool is being used, and would put a public network dependency between an
+internal user and an internal service. `test_the_ui_asks_for_nothing_off_this_host`
+holds the rule, because the tempting fix for the next library is a CDN tag
+and it would pass every other test.
+
+Three things about the integration are worth knowing before changing it:
+
+- **Every animation runs *to* the element's CSS resting state.** So a
+  missing library, or reduced motion, means "already there" rather than
+  "invisible". Two bugs came out of getting this wrong: the drawer scrim
+  had `opacity: 1` only inside the animation, so the Web Animations fill
+  reverted it to the stylesheet's `0` and the scrim never appeared at all.
+- **The no-animation branch clears inline styles rather than skipping.** A
+  finished animation commits its end value inline, which outranks any rule.
+  With animation later switched off, nothing cleared it — jump-to-latest
+  stayed invisible with every class correctly applied.
+- **`afterExit` runs exit callbacks on a timer, not on Motion's `finished`
+  promise.** Measured: a 120ms tween still had an unresolved `finished`
+  after 700ms. State changes hanging off it never ran, so the jump button
+  never set `hidden`, and its "already in this state" guard then blocked
+  every later show. Whichever settles first wins.
+
+**A drawer, instead of an amputation.** Below 900px the sidebar was
+`display: none` — the app did not adapt to a small screen so much as lose
+three of its four features on one, with no control anywhere to bring them
+back. Same panel, same brand, moved off canvas, with a focus trap and a
+scrim. Breakpoints at 1440 / 1180 / 900 / 560 / 380, plus a landscape-phone
+case; `100dvh` rather than `100vh`, because on iOS `100vh` put the composer
+below the fold at rest.
+
+**Touch targets grow; marks do not.** A 12px delete cross is right for a
+mouse and unusable with a thumb, and scaling it to 44px would mean designing
+the panel twice. Under `(pointer: coarse)` an absolutely positioned `::after`
+extends what is clickable past what is drawn, occupying no layout space —
+and wherever a hit area widens, the gap between controls widens with it, or
+neighbouring targets overlap. Verified: nothing interactive below 44px, and
+no horizontal page scroll at 375, 768, 1024 or 1440.
+
+**A command palette (⌘K).** Not a power-user shortcut so much as the second
+route to everything, which the drawer made necessary: actions that live only
+in the sidebar are three gestures away on a phone and unreachable by
+keyboard. Fuzzy-matches actions, conversations and suggested questions.
+
+**Stopping a turn.** There was no way to. A misrouted reconciliation is 28
+steps, which is a long time in front of an answer you already know is wrong.
+Abort is honest about its scope: it stops *this client reading the stream*.
+The server finishes and records the turn, so the partial is kept on screen
+and labelled rather than deleted — a turn that ran should not vanish because
+nobody watched it end.
+
+**Retry and Edit, which do not rewrite history.** Every turn is recorded in
+`conversation_turns` with the SQL behind it, and the whole provenance
+argument is that the record can be checked rather than trusted. So Retry
+asks again as a *new* turn and Edit loads the text back into the composer.
+The thread gains a turn; it never loses one.
+
+**Scrolling that lets go.** Autoscroll was unconditional, so scrolling up to
+re-read an earlier answer during a turn was undone by the next token.
+Reading the conversation while the agent wrote was impossible.
+
+**Charts: texture, not just colour.** The palette was computed to clear 3:1
+on both surfaces, which makes each series visible but not *distinguishable* —
+to a reader with deuteranopia the burgundy and the green converge, and every
+chart identified its series by colour alone. Each series after the first now
+also carries a hatch, applied by walking the finished SVG rather than
+threading a pattern id through four measured geometry builders. Series 0
+stays solid: a chart where everything is hatched is noisier than one where
+texture means "this is the other one".
+
+That walk has an ordering constraint that is easy to reintroduce. It must run
+**before** the `<defs>` are inserted. The other way round, it reaches inside
+the defs it just added and rewrites each pattern's own background rect —
+filled with the very palette colour being matched — into a reference to the
+pattern it belongs to. A self-referencing pattern is not an error: it renders
+as nothing, so the second series vanished while every fill attribute still
+read correctly in the DOM. Caught by looking at the screen, not by asserting
+on the tree.
+
+Also on charts: **Save PNG** (2x, styles inlined before serialising — a
+serialised SVG carries none of the stylesheet, so without that the export
+came out with black Times labels on a transparent ground) and **Copy data**
+as TSV. The values table gained a caption, row headers and its own
+`overflow-x` box, because a long category name used to make the *page*
+scroll sideways.
+
+**Screen readers get state, not tokens.** `#announce` speaks "working on it",
+"answer ready", "stopped", "that failed". Piping a character-at-a-time stream
+into a live region would read the same sentence dozens of times.
+
+The design guidance came from the `ui-ux-pro-max` skill, installed at
+`.claude/skills/ui-ux-pro-max` (searchable UX/style/colour data, its own
+`scripts/search.py`). Its **structural and UX** output was used. Its colour
+and typography recommendations were **discarded**: it proposed a generic
+dashboard blue with Fira Code/Fira Sans, which would have replaced the brand
+this file spends three sections protecting. The skill's own instructions say
+to treat its results as recommendations rather than as instructions that
+override repository rules, which is exactly right.
 
 Verified in a browser rather than by reading the HTML: a franchise question
 answered 12 at 34.62% with its SQL shown, and the reconciliation replayed
