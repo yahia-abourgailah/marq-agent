@@ -48,13 +48,21 @@ from langchain_core.messages import AIMessage, AnyMessage
 DEALS_ROUTE = "deals"
 LEADS_ROUTE = "leads"
 WORKSPACE_ROUTE = "workspace"
-OUT_OF_SCOPE = "out_of_scope"
+# [claude] Was `out_of_scope`, which returned one canned sentence. It is a
+# real conversational agent now — greetings, "what can you do", general
+# questions — so the name says that. A route called out_of_scope that
+# answers helpfully is a name that lies, and this codebase keeps getting
+# bitten by those.
+GENERAL_ROUTE = "general"
+
+# Kept as an alias so nothing importing the old name breaks silently.
+OUT_OF_SCOPE = GENERAL_ROUTE
 
 # [claude] WORKSPACE_ROUTE is listed before the CRM domains because
 # parse_route() matches in order and the workspace agent is the only one that
 # can see both an uploaded file and the CRM. A question naming both must not
 # be claimed by whichever route happens to be checked first.
-VALID_ROUTES = (WORKSPACE_ROUTE, DEALS_ROUTE, LEADS_ROUTE, OUT_OF_SCOPE)
+VALID_ROUTES = (WORKSPACE_ROUTE, DEALS_ROUTE, LEADS_ROUTE, GENERAL_ROUTE)
 
 # DEALS is the superset domain, so it is the safe landing place when the
 # classifier returns something unparseable.
@@ -91,10 +99,11 @@ Reply with exactly one word and nothing else:
                  checking or matching an uploaded file against the CRM.
                  Only the workspace specialist can see both.
 
-  out_of_scope   The question has nothing to do with the CRM at all — the
-                 weather, general knowledge, chit-chat, writing tasks.
+  general        The turn has no CRM subject at all — a greeting ("hi",
+                 "good morning", "thanks"), a question about what you can
+                 do, general knowledge, chit-chat, or a writing task.
 
-                 Vague business questions are NOT out of scope. "How is our
+                 Vague business questions are NOT general. "How is our
                  business doing", "give me an overview", "how did we perform
                  this quarter" are asking about the CRM in general terms;
                  send them to deals, which holds the pipeline.
@@ -123,7 +132,7 @@ Deciding — work down this list and stop at the first match:
 3. Is it entirely about leads, with deals never mentioned or implied?
    -> leads
 
-4. Is there no CRM subject at all?  -> out_of_scope
+4. Is there no CRM subject at all?  -> general
 
 5. Does it mention none of them by name and continue the previous turn?
    -> stay with the specialist that answered last
@@ -132,7 +141,7 @@ Rules 1 and 2 outrank rule 5: if a follow-up brings a file into a deals
 conversation it moves to workspace, and if it brings deals into a leads
 conversation it moves to deals.
 
-Restricted or unavailable data is NOT out_of_scope. If the subject is a CRM
+Restricted or unavailable data is NOT general. If the subject is a CRM
 thing — a deal, a lead, a franchise, a project, a stage, a source, a user —
 route it to a specialist even when you suspect the answer is unavailable.
 The specialist explains what it cannot provide; that is its job, not yours.
@@ -141,17 +150,20 @@ The specialist explains what it cannot provide; that is its job, not yours.
   "What is the name of franchise 9"   -> deals (no lookup table, the agent
                                         says so)
 
-Reserve out_of_scope for questions with no CRM subject at all.
+Reserve general for turns with no CRM subject at all.
 
-An uploaded file the user believes exists is never out_of_scope either. If
+An uploaded file the user believes exists is never general either. If
 they refer to a file, route to workspace; that specialist reports when there
 is nothing uploaded.
 
-Reply with one word: deals, leads, workspace, or out_of_scope."""
+Reply with one word: deals, leads, workspace, or general."""
 
 
+# [claude] No longer the general reply — the General Agent writes its own.
+# Kept as the degraded answer for when that model call fails, because a
+# fixed sentence is a better outcome than a stack trace.
 OUT_OF_SCOPE_REPLY = (
-    "I can only help with MarQ CRM data — deals and leads — and files you "
+    "I can help with MarQ CRM data — deals and leads — and with files you "
     "upload. Ask me about pipeline, lead sources, stages or response times, "
     "or point me at a spreadsheet or document, and I'll take a look."
 )
@@ -181,6 +193,15 @@ def parse_route(text: str) -> str:
 
     lowered = str(text).strip().lower()
 
+    # [claude] The route was renamed from `out_of_scope` to `general`, and a
+    # classifier trained on nothing in particular still reaches for the old
+    # word — it is the more natural phrase for the category. Accepting it
+    # costs nothing and stops an off-topic turn falling through to the deals
+    # fallback, which is a database round-trip to discover what a greeting
+    # already made obvious.
+    lowered = lowered.replace("out_of_scope", GENERAL_ROUTE)
+    lowered = lowered.replace("out of scope", GENERAL_ROUTE)
+
     # [claude] 1. The token on its own, punctuation trimmed.
     #
     # This is the path the classifier takes almost every time, and the only
@@ -203,14 +224,14 @@ def parse_route(text: str) -> str:
     # classifier's real answer.
     remaining = _NEGATED.sub(" ", lowered)
 
-    # 3. out_of_scope wins over anything still standing.
+    # 3. `general` wins over anything still standing.
     #
     # It is the one route name that cannot appear incidentally inside
-    # another, and misrouting an off-topic question into a full CRM agent is
-    # the more expensive mistake — it costs a database round-trip to
-    # discover what a one-line decline already knew.
-    if OUT_OF_SCOPE in remaining:
-        return OUT_OF_SCOPE
+    # another, and misrouting a greeting into a full CRM agent is the more
+    # expensive mistake — it costs a database round-trip to discover what
+    # "hi" already made obvious.
+    if GENERAL_ROUTE in remaining:
+        return GENERAL_ROUTE
 
     # 4. The earliest surviving mention.
     positions = [
@@ -271,6 +292,7 @@ def out_of_scope_message() -> AIMessage:
 
 __all__ = [
     "DEALS_ROUTE",
+    "GENERAL_ROUTE",  # [claude]
     "FALLBACK_ROUTE",
     "LEADS_ROUTE",
     "OUT_OF_SCOPE",

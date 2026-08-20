@@ -266,14 +266,29 @@ COMPLEX_CASES: tuple[ComplexCase, ...] = (
             "SELECT count(*) FROM deals WHERE deleted_at IS NULL"
             " AND expected_closing_date BETWEEN CURRENT_DATE"
             " AND CURRENT_DATE + INTERVAL '30 days'",
+            # [claude] Today is excluded from the backward window, because it
+            # is already in the forward one. `BETWEEN CURRENT_DATE - 30 AND
+            # CURRENT_DATE` counts the boundary day twice, and the agent —
+            # which uses `< CURRENT_DATE` — was right where this assertion
+            # was wrong.
+            #
+            # It passed for weeks by luck. The fixture emits dates as
+            # CURRENT_DATE ± INTERVAL, so which deals land exactly on today
+            # shifts daily; the day one finally did, the double count
+            # appeared as a 13-versus-12 disagreement. A boundary this case
+            # never meant to test was deciding whether it passed.
             "SELECT count(*) FROM deals WHERE deleted_at IS NULL"
-            " AND expected_closing_date BETWEEN CURRENT_DATE - INTERVAL '30 days'"
-            " AND CURRENT_DATE",
+            " AND expected_closing_date >= CURRENT_DATE - INTERVAL '30 days'"
+            " AND expected_closing_date < CURRENT_DATE",
         ),
         why=(
             "Both numbers are asserted. Asserting only the first would pass "
             "an answer that got the backward-looking window wrong, and the "
-            "backward one is the harder of the two."
+            "backward one is the harder of the two.\n\n"
+            "The two windows must not overlap: a deal closing today belongs "
+            "to the next thirty days, not the previous thirty, and counting "
+            "it in both inflates a comparison that is the whole point of "
+            "the question."
         ),
         tags=("temporal", "comparison"),
     ),

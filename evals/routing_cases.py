@@ -87,7 +87,7 @@ ROUTE_CASES: tuple[RouteCase, ...] = (
         "deals",
         why=(
             "A franchise is a CRM subject. The lookup table is unavailable, "
-            "which the deals specialist explains — it is not out_of_scope."
+            "which the deals specialist explains — it is not general."
         ),
     ),
     RouteCase(
@@ -99,7 +99,7 @@ ROUTE_CASES: tuple[RouteCase, ...] = (
         "How is our business doing?",
         "deals",
         why=(
-            "Vague but genuinely about the CRM. Sending it to out_of_scope "
+            "Vague but genuinely about the CRM. Sending it to general "
             "tells the user their own pipeline is off-topic."
         ),
     ),
@@ -177,8 +177,13 @@ ROUTE_CASES: tuple[RouteCase, ...] = (
         ),
     ),
     # ---- genuinely out of scope --------------------------------------
-    RouteCase("What is the weather in Cairo today?", "out_of_scope"),
-    RouteCase("Write me a poem about real estate.", "out_of_scope"),
+    RouteCase("What is the weather in Cairo today?", "general"),
+    # [claude] The two turns people actually open a chat window with. Both
+    # used to reach a canned refusal, which reads as broken rather than
+    # scoped — the reason `out_of_scope` became a real agent.
+    RouteCase("hi", "general"),
+    RouteCase("What can you help me with?", "general"),
+    RouteCase("Write me a poem about real estate.", "general"),
     # ---- follow-ups keep the thread ----------------------------------
     RouteCase(
         "And how many of those are commercial?",

@@ -4,7 +4,7 @@ Construction and wiring of the read-only MarQ domain graphs.
 
 from __future__ import annotations
 
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, SystemMessage
 from langgraph.errors import GraphRecursionError
 from langgraph.graph import StateGraph
 
@@ -16,11 +16,12 @@ from app.graph.agents.domain import (
     Domain,
     build_domain_agent,
 )
+from app.graph.agents.general import GENERAL_AGENT_SYSTEM_PROMPT
 from app.graph.checkpointer import build_checkpointer
 from app.graph.state import AgentState
 from app.graph.supervisor import (
     FALLBACK_ROUTE,
-    OUT_OF_SCOPE,
+    GENERAL_ROUTE,
     choose_route,
     out_of_scope_message,
 )
@@ -213,16 +214,40 @@ def build_supervisor_graph(checkpointer=None):
 
         return {"route": await choose_route(model, state["messages"])}
 
-    async def out_of_scope_node(state: AgentState):
-        """Answer directly, without spending a database round-trip."""
+    async def general_node(state: AgentState):
+        """
+        [claude] Greetings, capability questions, general conversation.
 
-        return {
-            "messages": [out_of_scope_message()],
-            "route": OUT_OF_SCOPE,
-        }
+        Was a canned sentence, which meant "hi" and "what can you do?" — the
+        two things people actually open a chat window with — both got a
+        refusal. That reads as broken rather than scoped.
+
+        It is a plain model call with a system prompt, deliberately **not**
+        `build_domain_agent`: that would hand it a `sql_query` tool, and this
+        is the agent most likely to be asked to do something odd. It holds no
+        keys at all, so there is nothing for a persuasive user to reach.
+
+        A failure here degrades to the fixed sentence rather than taking the
+        turn down, because the whole point is answering a greeting.
+        """
+
+        messages = [
+            SystemMessage(content=GENERAL_AGENT_SYSTEM_PROMPT),
+            *state["messages"],
+        ]
+
+        try:
+            reply = await model.ainvoke(messages)
+        except Exception:
+            return {
+                "messages": [out_of_scope_message()],
+                "route": GENERAL_ROUTE,
+            }
+
+        return {"messages": [reply], "route": GENERAL_ROUTE}
 
     graph.add_node("supervisor", supervisor_node)
-    graph.add_node(OUT_OF_SCOPE, out_of_scope_node)
+    graph.add_node(GENERAL_ROUTE, general_node)
 
     for name, domain in DOMAINS.items():
         graph.add_node(f"{name}_agent", make_domain_node(domain, model))
@@ -234,13 +259,13 @@ def build_supervisor_graph(checkpointer=None):
         lambda state: state.get("route", FALLBACK_ROUTE),
         {
             **{name: f"{name}_agent" for name in DOMAINS},
-            OUT_OF_SCOPE: OUT_OF_SCOPE,
+            GENERAL_ROUTE: GENERAL_ROUTE,
         },
     )
 
     for name in DOMAINS:
         graph.set_finish_point(f"{name}_agent")
-    graph.set_finish_point(OUT_OF_SCOPE)
+    graph.set_finish_point(GENERAL_ROUTE)
 
     if checkpointer is None:
         checkpointer = build_checkpointer()

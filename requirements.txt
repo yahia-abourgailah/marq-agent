@@ -86,3 +86,7 @@ PyJWT[crypto]>=2.8
 # --- Not yet imported by any module; kept for planned work ---------------
 # Caching (no code imports redis yet)
 redis>=5.0
+
+langchain-tavily>=0.2.13
+tavily-python>=0.7.13
+tavily>=1.1.0

@@ -13,6 +13,7 @@ import pytest
 from app.graph.supervisor import (
     DEALS_ROUTE,
     FALLBACK_ROUTE,
+    GENERAL_ROUTE,
     LEADS_ROUTE,
     OUT_OF_SCOPE,
     VALID_ROUTES,
@@ -26,13 +27,13 @@ from app.graph.supervisor import (
     [
         ("deals", DEALS_ROUTE),
         ("leads", LEADS_ROUTE),
-        ("out_of_scope", OUT_OF_SCOPE),
+        ("general", OUT_OF_SCOPE),
         # A small model asked for one word rarely gives exactly one word.
         ("Deals.", DEALS_ROUTE),
         ("  LEADS\n", LEADS_ROUTE),
         ("Route: deals", DEALS_ROUTE),
         ("The answer is leads", LEADS_ROUTE),
-        ("out_of_scope — not a CRM question", OUT_OF_SCOPE),
+        ("general — not a CRM question", OUT_OF_SCOPE),
     ],
 )
 def test_parse_route_is_forgiving(raw, expected):
@@ -51,7 +52,7 @@ def test_unparseable_output_falls_back_to_the_superset_domain(raw):
 
 
 def test_every_route_is_valid():
-    for raw in ("deals", "leads", "out_of_scope", "nonsense"):
+    for raw in ("deals", "leads", "general", "nonsense"):
         assert parse_route(raw) in VALID_ROUTES
 
 
@@ -140,7 +141,7 @@ def test_studio_entry_points_build():
 #
 # It used to substring-match in VALID_ROUTES order, so any reply that was not
 # a bare word resolved to whichever route name appeared earliest in the tuple
-# rather than the one the classifier chose. out_of_scope could never win
+# rather than the one the classifier chose. general could never win
 # against a reply naming another route, so an off-topic question ran a full
 # CRM agent instead of declining in one line.
 #
@@ -158,12 +159,12 @@ def test_studio_entry_points_build():
         # the second wants the first. The negation is what distinguishes them.
         ("Not a deals question — route to leads", "leads"),
         ("This is about leads, not deals.", "leads"),
-        ("out_of_scope: I can't help with deals data", "out_of_scope"),
+        ("general: I can't help with deals data", "general"),
         ("no workspace file; this is a leads question", "leads"),
         ("This is a workspace question, not deals", "workspace"),
         ("I'd say leads rather than deals", "leads"),
         ("not workspace, not leads — deals", "deals"),
-        ("This is chit-chat, so out_of_scope", "out_of_scope"),
+        ("This is chit-chat, so general", "general"),
     ],
 )
 def test_prose_replies_resolve_to_the_route_the_classifier_meant(
@@ -178,7 +179,7 @@ def test_prose_replies_resolve_to_the_route_the_classifier_meant(
         ("deals", "deals"),
         ("leads", "leads"),
         ("workspace", "workspace"),
-        ("out_of_scope", "out_of_scope"),
+        ("general", "general"),
         ("  DEALS.  ", "deals"),
         ("Deals", "deals"),
         ("Route: leads", "leads"),
@@ -197,16 +198,37 @@ def test_unrecognisable_replies_fall_back_to_the_superset_domain(reply):
     assert parse_route(reply) == FALLBACK_ROUTE
 
 
-def test_out_of_scope_is_reachable_from_prose():
+def test_general_is_reachable_from_prose():
     """
-    The regression that mattered most: out_of_scope could never win, so an
+    The regression that mattered most: general could never win, so an
     off-topic question cost a database round-trip to discover what a one-line
     decline already knew.
     """
 
     for reply in (
-        "out_of_scope",
-        "out_of_scope — not a deals question",
-        "I think this is out_of_scope",
+        "general",
+        "general — not a deals question",
+        "I think this is general",
     ):
         assert parse_route(reply) == OUT_OF_SCOPE
+
+
+# ============================================================
+# The old route name
+# ============================================================
+
+
+@pytest.mark.parametrize(
+    "reply",
+    ["out_of_scope", "out of scope", "Route: out_of_scope", "**out_of_scope**"],
+)
+def test_the_previous_route_name_still_resolves(reply):
+    """
+    [claude] `out_of_scope` was renamed `general`, and a classifier still
+    reaches for the old phrase — it is the more natural wording for the
+    category. Accepting it costs nothing; not accepting it drops a greeting
+    into the deals fallback, which spends a database round-trip discovering
+    what "hi" already made obvious.
+    """
+
+    assert parse_route(reply) == GENERAL_ROUTE
