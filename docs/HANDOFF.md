@@ -162,6 +162,7 @@ python -m evals.routing_cases   # 37 routing cases
 QDRANT_URL="" python -m evals.workspace_cases   # 8 workspace cases
 python -m evals.complex_cases   # 14 multi-hop cases, through the supervisor
 ruff check .
+./scripts/ci_local.sh              # exactly what CI runs, in a fresh clone
 langgraph dev                   # Studio: marq_agent + three domain graphs
 
 AUTH_DEV_MODE=true python main.py          # HTTP API on 127.0.0.1:8000
@@ -1358,6 +1359,36 @@ Two details worth keeping:
   id-to-key mapping. Without JWKS, `kid` is a hint from the token about which
   key to trust, and trying each key is equivalent while the algorithm stays
   pinned.
+
+### CI went red on the commit that added the tests
+
+Worth recording, because the mistake is easy to repeat. The CI environment
+was verified once by hand — the checked-in template plus three placeholders,
+888 passing — and then three test files were added without re-checking. Two
+of them assumed a populated `.env.development`. CI failed on a change whose
+author had run the whole suite and watched it pass.
+
+Both failures were in `test_secrets.py` and both were the test's fault:
+
+- **Empty is not unset.** Pydantic renders `SecretStr("")` as `''`, not
+  `**********` — there is nothing to mask. The test skipped `None` only, so
+  it passed locally, where every credential is populated, and failed in CI,
+  where the template leaves four of the five blank.
+- **The repr scan found a false positive again.** The workflow set
+  `MODEL_NAME` and `MODEL_API_KEY` to the same placeholder, so the api key
+  was found inside `model_name`. This is the *second* false positive from
+  that scan — the first was a short password appearing inside
+  `postgres_db` — and the length threshold added for the first does not help
+  with the second, which was fourteen characters.
+
+  A length threshold was the wrong fix. What the scan has to ask is *where*
+  the occurrence came from: a secret in the repr is only a leak if no
+  non-secret field accounts for it. That is what it does now.
+
+`scripts/ci_local.sh` closes the loop: a fresh clone, working-tree changes
+overlaid, only the template plus placeholders, no inherited environment. It
+does not reinstall dependencies — that needs the network and has never been
+what broke.
 
 ### The same bug, three times
 

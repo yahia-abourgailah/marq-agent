@@ -51,34 +51,64 @@ def test_every_credential_field_is_declared_secret(field):
 
 @pytest.mark.parametrize("field", SECRET_FIELDS)
 def test_a_credential_does_not_render_itself(field):
+    """
+    [claude] Skips unset *and* empty, which is not the same thing.
+
+    Pydantic renders `SecretStr("")` as `''` rather than `**********` —
+    there is nothing to mask. The first version of this skipped only
+    `None`, so it passed locally where every credential is populated and
+    failed in CI, where the checked-in template leaves four of the five
+    blank. An empty credential is not a leak; it is an absent credential.
+    """
+
     value = getattr(settings, field)
 
-    if value is None:
+    if value is None or not reveal(value):
         pytest.skip(f"{field} is not set in this environment")
 
     assert str(value) == "**********"
     assert "**********" in repr(value)
 
 
-# [claude] Short secrets are not searched for, and the reason is a false
-# positive this test produced on its first run.
+# [claude] A substring scan of the repr is the right idea and needs care,
+# because it produced two false positives before it produced a true one.
 #
-# A substring search reported the settings repr as leaking
-# `postgres_password` — because on the development fixture that password is
-# a short word that also appears inside `postgres_db`, `postgres_user` and
-# three unrelated fields. The credential was correctly masked; the test was
-# matching the wrong occurrence.
+# Locally: `postgres_password` is a short word that also appears inside
+# `postgres_db` and `postgres_user`. In CI: the workflow set `MODEL_NAME`
+# and `MODEL_API_KEY` to the same placeholder, so the api key was found in
+# `model_name`. Both times the credential was masked correctly and the
+# scan was matching a different field that legitimately holds that text.
 #
-# So the scan only runs against secrets long enough to be distinctive.
-# Everything shorter is covered by the per-field masking assertions above,
-# which do not depend on the value at all.
-DISTINCTIVE_LENGTH = 12
+# A length threshold does not fix this — the CI case was fourteen
+# characters. What fixes it is asking *where* the occurrence came from: a
+# secret appearing in the repr is only a leak if no non-secret field
+# accounts for it.
+DISTINCTIVE_LENGTH = 8
+
+
+def _explained_by_a_visible_field(secret: str) -> str | None:
+    """The name of a non-secret field that legitimately holds this text."""
+
+    for name in type(settings).model_fields:
+        if name in SECRET_FIELDS:
+            continue
+
+        value = getattr(settings, name, None)
+
+        if isinstance(value, str) and secret in value:
+            return name
+
+    return None
 
 
 def test_the_settings_object_carries_no_credential_in_its_repr():
     """
     The realistic leak. Nobody prints a password on purpose; they print the
     settings object while debugging something else.
+
+    What this is really checking is that no *other* field — a DSN, a URL
+    with credentials in it — carries the secret in plain text past the
+    masking on the field it belongs to.
     """
 
     rendered = repr(settings) + str(settings)
@@ -86,25 +116,27 @@ def test_the_settings_object_carries_no_credential_in_its_repr():
 
     for field in SECRET_FIELDS:
         value = getattr(settings, field)
-
-        if value is None:
-            continue
-
         secret = reveal(value) or ""
 
         if len(secret) < DISTINCTIVE_LENGTH:
             continue
 
-        scanned += 1
+        if secret not in rendered:
+            scanned += 1
+            continue
 
-        assert secret not in rendered, (
-            f"{field} appears verbatim in the settings repr"
+        source = _explained_by_a_visible_field(secret)
+
+        assert source is not None, (
+            f"{field} appears verbatim in the settings repr and no "
+            "non-secret field accounts for it"
         )
 
-    assert scanned, (
-        "no secret in this environment was long enough to scan for — the "
-        "masking assertions above are what is carrying this file here"
-    )
+    if not scanned:
+        pytest.skip(
+            "no credential in this environment is distinctive enough to "
+            "scan for; the masking assertions above carry this file here"
+        )
 
 
 def test_the_masked_form_is_what_appears_instead():

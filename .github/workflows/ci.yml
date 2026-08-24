@@ -68,10 +68,16 @@ jobs:
           # them — the hermetic tests build a model client and a token
           # verifier, and never call out with either.
           cp .env.development.example .env.development
+          # [claude] Distinct values, not one placeholder repeated. The
+          # first version used "ci-placeholder" for both the model name and
+          # the api key, and test_secrets scans the settings repr for
+          # credentials appearing in plain text — it found the key inside
+          # `model_name` and reported a leak that was not one. Test fixed
+          # too; identical placeholders are still a bad habit.
           {
-            echo "MODEL_NAME=ci-placeholder"
+            echo "MODEL_NAME=ci-model"
             echo "MODEL_BASE_URL=http://127.0.0.1:9/v1"
-            echo "MODEL_API_KEY=ci-placeholder"
+            echo "MODEL_API_KEY=ci-key-not-a-real-credential"
           } >> .env.development
 
       - name: Lint
