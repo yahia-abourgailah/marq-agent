@@ -329,3 +329,176 @@ async def test_specialist_answers_reach_synthesis_as_user_role(monkeypatch):
         f"specialist answers arrived as {carrier.type!r} — third-party text "
         "must not carry system authority"
     )
+
+
+# ============================================================
+# The residual: answers are CRM data too
+# ============================================================
+
+
+@pytest.mark.asyncio
+async def test_a_toolless_specialist_does_not_read_another_s_answers(
+    monkeypatch,
+):
+    """
+    [claude] The narrower half of A1, found by the remediation review after
+    the transcript split closed the wider one.
+
+    Removing tool payloads from `messages` removed the raw rows. It did not
+    remove CRM data, because the *answers* contain it: a reply to "who are
+    our top clients by area" is prose naming clients, and it lives in the
+    transcript every specialist is handed on the next turn.
+
+    So the research agent — the one holding a tool that sends text to a
+    third party — could still read a client name out of history, with only
+    a prompt rule stopping it reaching a Tavily query. Smaller than raw
+    rows, same mechanism, same mitigation.
+
+    Asserted on what the agent *receives*, because that is the property.
+    What it chooses to do with it is the prompt's business.
+    """
+
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    import app.graph.builder as builder
+
+    seen: list = []
+
+    class FakeModel:
+        def bind_tools(self, tools, **kwargs):
+            return self
+
+        async def ainvoke(self, messages, **kwargs):
+            text = " ".join(
+                str(m.get("content", "")) if isinstance(m, dict)
+                else str(getattr(m, "content", ""))
+                for m in messages
+            )
+
+            if "Reply with one word" in text:
+                return AIMessage(content="research")
+
+            # Everything the research specialist was handed.
+            seen.append(text)
+
+            return AIMessage(content="The market is growing.")
+
+    monkeypatch.setattr(builder, "get_model", lambda: FakeModel())
+    monkeypatch.setattr(
+        "app.graph.builder.build_domain_agent", lambda *a, **k: ToolUsingAgent()
+    )
+
+    graph = builder.build_supervisor_graph(checkpointer=InMemorySaver())
+    config = {"configurable": {"thread_id": "answers-case"}}
+
+    # Turn one: a deals answer naming a client, planted directly in the
+    # transcript the way synthesise would write it.
+    await graph.ainvoke(
+        {
+            "messages": [
+                HumanMessage(content="who are our top clients by area?"),
+                AIMessage(
+                    content="A. Ibrahim holds the largest area at 412 sqm.",
+                    additional_kwargs={"specialists": ["deals"]},
+                ),
+                HumanMessage(content="what is the market outlook?"),
+            ]
+        },
+        config=config,
+    )
+
+    assert seen, "the research specialist never ran"
+
+    handed_over = seen[-1]
+
+    assert "A. Ibrahim" not in handed_over, (
+        "the research agent was handed a client name out of the deals "
+        "specialist's answer"
+    )
+    # The user's own question survives, so a follow-up still resolves.
+    assert "market outlook" in handed_over
+
+
+def test_a_specialist_still_reads_its_own_prior_answers():
+    """
+    The other half of the rule. Scoping history is only correct if it keeps
+    what the specialist legitimately needs — "and last year?" after its own
+    answer has to still resolve, or this trades a small leak for a broken
+    follow-up.
+    """
+
+    from app.graph.builder import own_history_only
+
+    history = [
+        HumanMessage(content="what is the market outlook?"),
+        AIMessage(
+            content="The market grew 12% last quarter.",
+            additional_kwargs={"specialists": ["research"]},
+        ),
+        HumanMessage(content="and the year before?"),
+    ]
+
+    kept = own_history_only(history, "research")
+
+    assert [m.content for m in kept] == [
+        "what is the market outlook?",
+        "The market grew 12% last quarter.",
+        "and the year before?",
+    ]
+
+
+def test_a_merged_answer_is_withheld_from_both_contributors():
+    """
+    [claude] A two-specialist reply holds both halves in one message and
+    cannot be separated afterwards, so it is attributable to neither. The
+    research half of it is research's own words — and it arrives fused to
+    the deals figures, which is precisely what must not travel.
+    """
+
+    from app.graph.builder import own_history_only
+
+    merged = AIMessage(
+        content="A. Ibrahim holds 412 sqm. The wider market grew 12%.",
+        additional_kwargs={"specialists": ["deals", "research"]},
+    )
+
+    for who in ("deals", "research"):
+        assert own_history_only([merged], who) == []
+
+
+def test_an_unattributed_answer_is_withheld():
+    """
+    Fails closed, which is what makes an old checkpoint safe to replay.
+    Every message written before attribution existed carries none, and
+    those are exactly the ones holding unfiltered CRM prose.
+    """
+
+    from app.graph.builder import own_history_only
+
+    legacy = AIMessage(content="A. Ibrahim holds the largest area.")
+
+    assert own_history_only([legacy], "research") == []
+    assert own_history_only([legacy], "deals") == []
+
+
+def test_domain_specialists_are_not_scoped():
+    """
+    [claude] Scoping applies to the toolless specialists only, and that is
+    deliberate rather than an oversight.
+
+    A domain agent holds `sql_query`; it can fetch any row its guard
+    permits whenever it likes, so withholding an earlier answer protects
+    nothing and would break every cross-turn follow-up the routing rules
+    depend on. The property being defended is egress, and only the research
+    agent has a tool that leaves the building.
+    """
+
+    import inspect
+
+    from app.graph import builder
+
+    source = inspect.getsource(builder.make_domain_node)
+
+    assert "own_history_only" not in source, (
+        "domain nodes must keep the full transcript — see the docstring"
+    )

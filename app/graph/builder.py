@@ -157,6 +157,68 @@ SPECIALIST_SCOPES = {
 }
 
 
+def attribute(message, specialists):
+    """
+    Record which specialists produced an answer, on the answer.
+
+    [claude] `messages` carries no authorship otherwise, and without it
+    "whose answer is this" cannot be asked — which is exactly what
+    `own_history_only` below needs in order to keep one specialist's
+    figures out of another's context.
+
+    Stored in `additional_kwargs`, which survives checkpointing and is not
+    shown to the model.
+    """
+
+    message.additional_kwargs["specialists"] = list(specialists)
+
+    return message
+
+
+def own_history_only(history, me: str):
+    """
+    History for a specialist that must not read another's answers.
+
+    [claude] The narrower half of the context leak, closed after the
+    transcript split closed the wider one.
+
+    Removing tool payloads from `messages` removed the raw rows. It did not
+    remove CRM data, because the *answers* contain it: a reply to "who are
+    our top clients by area" is prose naming clients, and it sits in the
+    transcript every specialist is handed on the following turn — including
+    the research agent, which holds the one tool that sends text outside
+    the company. Prose figures rather than raw rows is a smaller exposure
+    with an identical mechanism and an identical mitigation: a prompt rule.
+
+    So a toolless specialist gets the human turns plus the answers it
+    produced itself. Follow-ups still resolve, because "and last year?"
+    needs the question it refers to and that is a human turn — and the CRM
+    half never enters.
+
+    **Unattributed answers are withheld**, which is the important default.
+    A merged two-specialist reply carries both halves in one message and is
+    not safely attributable to either; so is every message written before
+    this existed, which is what makes replaying an old checkpoint safe
+    rather than a way around this.
+    """
+
+    kept = []
+
+    for message in history:
+        if getattr(message, "type", None) != "ai":
+            kept.append(message)
+            continue
+
+        authors = (getattr(message, "additional_kwargs", None) or {}).get(
+            "specialists"
+        )
+
+        if authors and set(authors) <= {me}:
+            kept.append(message)
+
+    return kept
+
+
 def scope_to_own_part(history, plan, me: str):
     """
     Append the split-question instruction, when there is a split.
@@ -638,7 +700,10 @@ def build_supervisor_graph(checkpointer=None):
             used: list[str] = []
             stop_reason = COMPLETED
 
-            history = trim_for_model(state["messages"])
+            # [claude] Filtered before it is trimmed, so the token budget
+            # is spent on history this specialist may actually read rather
+            # than on answers that are about to be discarded.
+            history = trim_for_model(own_history_only(state["messages"], name))
             history = scope_to_own_part(history, state.get("plan"), name)
 
             try:
@@ -759,7 +824,12 @@ def build_supervisor_graph(checkpointer=None):
 
         if len(answered) == 1:
             return {
-                "messages": [AIMessage(content=answered[0]["answer"])],
+                "messages": [
+                    attribute(
+                        AIMessage(content=answered[0]["answer"]),
+                        [answered[0]["specialist"]],
+                    )
+                ],
                 "stop_reason": stop_reason,
             }
 
@@ -805,7 +875,17 @@ def build_supervisor_graph(checkpointer=None):
                 ]
             )
             log_usage([merged], specialist="synthesise")
-            return {"messages": [merged], "stop_reason": stop_reason}
+
+            # [claude] Attributed to every contributor, which makes a merged
+            # answer attributable to no single specialist — see
+            # own_history_only. That is the intended outcome: the two halves
+            # are in one message and cannot be separated afterwards.
+            return {
+                "messages": [
+                    attribute(merged, [f["specialist"] for f in answered])
+                ],
+                "stop_reason": stop_reason,
+            }
         except Exception:
             logger.exception("synthesis_failed", extra={"stop_reason": ERROR})
 
@@ -816,7 +896,12 @@ def build_supervisor_graph(checkpointer=None):
             # do not get is the merged answer that was asked for, and a
             # monitor counting `completed` should not be told otherwise.
             return {
-                "messages": [AIMessage(content=body)],
+                "messages": [
+                    attribute(
+                        AIMessage(content=body),
+                        [f["specialist"] for f in answered],
+                    )
+                ],
                 "stop_reason": ERROR,
             }
 

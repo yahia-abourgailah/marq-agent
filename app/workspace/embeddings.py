@@ -120,7 +120,8 @@ class SentenceTransformerEmbedder:
     def min_relevance_score(self) -> float:
         """
         Calibrated against a real uploaded export — see
-        MIN_RELEVANCE_SCORE in index.py for the measurements.
+        MIN_RELEVANCE_SCORE at the top of this module for the
+        measurements it was calibrated from.
         """
 
         return MIN_RELEVANCE_SCORE

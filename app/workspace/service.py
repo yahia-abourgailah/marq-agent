@@ -148,7 +148,7 @@ class WorkspaceService:
 
         [claude] Returns the passages that cleared the relevance floor, and
         how many were dropped for falling under it. See
-        MIN_RELEVANCE_SCORE in index.py.
+        MIN_RELEVANCE_SCORE in embeddings.py.
         """
 
         if self.index is None or self.embedder is None:

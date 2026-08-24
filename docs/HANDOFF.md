@@ -1407,6 +1407,65 @@ column. Each surfaced differently and the last one is the instructive one:
 That last one is worth remembering: a fake that models the contract is
 necessary, and is not evidence that the implementation matches it.
 
+## Remediation review — 24 August
+
+A pass over `7dcadba..b2e1126` confirming the two earlier reviews are closed.
+Four items came back, and the first is a residual of our own fix.
+
+### The transcript still carried CRM figures — in prose
+
+Splitting the trace out of `messages` removed the tool *payloads*. It did not
+remove CRM data, because **the answers contain it**. A reply to "who are our
+top clients by area" is prose naming clients, and it sat in the transcript
+every specialist was handed on the following turn — including the research
+agent, which holds the one tool that sends text outside the company.
+
+Smaller than raw rows. Identical mechanism, identical mitigation: a prompt
+rule. And the docstring in `research.py` — *"the two halves never meet inside
+this agent"* — was true within a turn and false across turns.
+
+The fix has two halves:
+
+- **Answers carry authorship.** `synthesise` stamps
+  `additional_kwargs["specialists"]` on every message it writes.
+- **Toolless specialists read their own history only.** `own_history_only`
+  keeps the human turns plus answers this specialist produced, and withholds
+  everything else.
+
+Three properties are worth keeping in mind:
+
+*A merged answer is withheld from both contributors.* Two halves in one
+message cannot be separated afterwards, so it is attributable to neither.
+
+*Unattributed answers are withheld.* Every message written before this
+existed carries no attribution — and those are exactly the ones holding
+unfiltered CRM prose, so an old checkpoint replays safely rather than
+routing around this.
+
+*Domain specialists are not scoped, deliberately.* A domain agent holds
+`sql_query` and can fetch any permitted row whenever it likes; withholding an
+earlier answer protects nothing and would break the cross-turn follow-ups the
+routing rules depend on. The property being defended is **egress**, and only
+research has a tool that leaves the building.
+
+Five tests, including one asserting domain nodes are *not* scoped, so the
+asymmetry reads as a decision rather than an omission.
+
+### The smaller three
+
+- **Two docstrings pointed at `index.py`** for `MIN_RELEVANCE_SCORE`, which
+  moved to `embeddings.py` when the floor became a property of the encoder.
+  The pointers did not move with it. Corrected — and this is the small
+  version of the "never let a name lie" rule the reviews keep returning to.
+- **`.claude/skills/` is now documented** in the README as deliberate team
+  tooling rather than reading as accidental, with what it cost (3.7 MB), why
+  its nested `scripts/tests/` is not part of this suite, and how to remove it.
+  Verified: `pytest` collects nothing from it and `ruff` excludes it.
+- **`test_rls_policies.py` is integration-marked**, so the proof that `002`
+  works runs where PostgreSQL exists and not on every push. That is correct —
+  it needs a database — but it belongs on the pre-deploy checklist rather
+  than being assumed covered by a green CI.
+
 ## Open items
 
 ### Next up

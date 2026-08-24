@@ -83,12 +83,32 @@ docs/
   postman/             importable collection + environment
   logging_config.py    structured JSON logging
 main.py                HTTP entry point
+docs/adr/              architecture decision records — five, and why
+migrations/            applied by hand, in order; see its README
 evals/                 behavioural cases; complex_cases.py is the multi-hop suite
 scripts/               developer utilities, not imported by the app
 tests/
+.claude/skills/        editor tooling, not application code — see below
+.github/workflows/     CI: ruff and the hermetic suite, on every push
 ```
 
-`app/api/` and `app/auth/` are placeholders for work in progress.
+### `.claude/skills/` is tooling, not application code
+
+`ui-ux-pro-max` is a third-party UI/UX design skill (MIT, from
+[nextlevelbuilder](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill)),
+committed deliberately so the whole team gets it rather than each installing
+it separately. It was used for the console's structural and accessibility
+work; its colour and typography recommendations were discarded, because they
+would have replaced The MarQ brand.
+
+Nothing in `app/` imports it and nothing in it runs in production. It carries
+its own `scripts/tests/` directory, which is **not** part of this project's
+suite — `pytest` collects nothing from it and `ruff` excludes it via
+`extend-exclude` in `pyproject.toml`. If you are grepping for a test and land
+in there, that is why.
+
+It costs 3.7 MB in the repository. Delete the directory if that is not a
+trade you want; nothing else depends on it.
 
 ### Agents
 
