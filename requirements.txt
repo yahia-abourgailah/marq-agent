@@ -63,6 +63,12 @@ langgraph-cli[inmem]>=0.4
 # [claude] Moved up from "not yet imported": app/api/ exists now and imports
 # all of these. main.py is the entry point; see app/api/app.py.
 fastapi>=0.115
+
+# [claude] Metrics. Present transitively already (via an OpenTelemetry
+# dependency), which is exactly why it is declared here: relying on a
+# transitive dependency means a version bump elsewhere can remove an
+# endpoint the monitoring stack is scraping.
+prometheus-client>=0.20
 uvicorn[standard]>=0.32
 httpx>=0.27
 

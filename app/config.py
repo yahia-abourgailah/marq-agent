@@ -10,7 +10,7 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # [claude] APP_ENV now actually selects the environment file. It was
@@ -25,12 +25,42 @@ APP_ENV = os.getenv("APP_ENV", "development")
 ENV_FILE = f".env.{APP_ENV}"
 
 
+def reveal(secret: SecretStr | str | None) -> str | None:
+    """
+    [claude] Read a secret's actual value, at the one place that needs it.
+
+    The five credential fields are `SecretStr` rather than `str`, which is a
+    small change with one specific purpose: `str()` and `repr()` of a
+    `SecretStr` are `**********`. A password can no longer reach a traceback,
+    a log line, an `f"{settings}"`, or a `repr` of the settings object by
+    accident — and every one of those is a route that has leaked credentials
+    in real systems.
+
+    It protects against carelessness, not against an attacker: anything that
+    can call this can read the value, and the process holds it in memory
+    regardless. What it buys is that leaking one now takes a deliberate
+    `reveal()` rather than an incidental string format, which is the
+    difference between a mistake anyone can make and one you have to mean.
+
+    Accepts a plain `str` so a caller passing an already-revealed value, or
+    a test passing a literal, does not have to care which it holds.
+    """
+
+    if secret is None:
+        return None
+
+    if isinstance(secret, SecretStr):
+        return secret.get_secret_value()
+
+    return secret
+
+
 class Settings(BaseSettings):
     # Marquise application database
     postgres_host: str
     postgres_port: int = 5432
     postgres_user: str
-    postgres_password: str
+    postgres_password: SecretStr
     postgres_db: str
 
     # CRM PostgreSQL database
@@ -39,7 +69,7 @@ class Settings(BaseSettings):
     crm_postgres_host: str | None = None
     crm_postgres_port: int = 5432
     crm_postgres_user: str | None = None
-    crm_postgres_password: str | None = None
+    crm_postgres_password: SecretStr | None = None
     crm_postgres_db: str | None = None
 
     # [claude] The read-only role the CRM reads should use.
@@ -55,7 +85,7 @@ class Settings(BaseSettings):
     # `Database.is_read_only` reports which one is actually in use, and a
     # startup check can refuse to serve if it is not the role.
     postgres_readonly_user: str | None = None
-    postgres_readonly_password: str | None = None
+    postgres_readonly_password: SecretStr | None = None
 
     # Redis
     redis_url: str
@@ -93,7 +123,7 @@ class Settings(BaseSettings):
 
     model_name: str
     model_base_url: str
-    model_api_key: str
+    model_api_key: SecretStr
 
     # [claude] Defaults to 0.0 — greedy decoding.
     #
@@ -172,6 +202,18 @@ class Settings(BaseSettings):
     # One of these is required unless auth_dev_mode is on. `jwt_public_key`
     # for asymmetric algorithms, `jwt_secret` for HS*.
     jwt_public_key: str | None = None
+
+    # [claude] The outgoing secret during an HS* key rotation.
+    #
+    # Asymmetric setups need no equivalent — `jwt_public_key` accepts a PEM
+    # bundle, so several keys travel in the field that already exists. A
+    # shared secret has no such format, so retiring one needs somewhere to
+    # put it.
+    #
+    # Set it to the old secret, deploy, wait out the longest token TTL,
+    # then clear it. Without a window, changing a signing key signs every
+    # user out mid-question.
+    jwt_secret_previous: SecretStr | None = None
     jwt_secret: str | None = None
 
     # [claude] The public key as a file path instead of a literal.
@@ -216,7 +258,7 @@ class Settings(BaseSettings):
     # A query sent here leaves your infrastructure. Only the Research Agent
     # holds the tool, and it has no CRM access, so nothing derived from the
     # database can reach a third party through it.
-    tavily_api_key: str | None = None
+    tavily_api_key: SecretStr | None = None
 
     # ----------------------------------------------------------
     # Local UI

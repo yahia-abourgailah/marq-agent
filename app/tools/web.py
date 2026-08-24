@@ -28,7 +28,7 @@ from typing import Any
 
 from langchain_core.tools import tool
 
-from app.config import settings
+from app.config import reveal, settings
 
 logger = logging.getLogger("marq.web")
 
@@ -87,7 +87,7 @@ def build_search_client(config=None):
     # plainly configured. Passed explicitly for that reason.
     return TavilySearch(
         api_wrapper=TavilySearchAPIWrapper(
-            tavily_api_key=config.tavily_api_key
+            tavily_api_key=reveal(config.tavily_api_key)
         ),
         max_results=MAX_RESULTS,
         topic="general",

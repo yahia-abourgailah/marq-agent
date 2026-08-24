@@ -251,7 +251,15 @@ class ConversationRepository:
                     (older_than_days,),
                 )
 
-                return [(row[0], row[1]) for row in await cursor.fetchall()]
+                # [claude] Named, not positional. The pool uses `dict_row`,
+                # so `row[0]` is a KeyError rather than the first column —
+                # and it only raises when the query actually returns
+                # something, which a retention sweep does not on a fresh
+                # database.
+                return [
+                    (row["subject"], row["thread_id"])
+                    for row in await cursor.fetchall()
+                ]
 
     async def turn_count(self, subject: str, thread_id: str) -> int:
         """
@@ -272,7 +280,14 @@ class ConversationRepository:
                 )
                 row = await cursor.fetchone()
 
-                return int(row[0]) if row else 0
+                # [claude] Named, not positional — `dict_row` again. The
+                # hermetic tests could not catch this: `FakeConversations`
+                # implements `turn_count` correctly, so the turn-cap tests
+                # passed against a stub of the right shape while the real
+                # query raised. A fake that models the contract is
+                # necessary and is not evidence the implementation matches
+                # it.
+                return int(row["turn_count"]) if row else 0
 
 
 __all__ = [

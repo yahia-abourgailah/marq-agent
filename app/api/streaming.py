@@ -44,6 +44,7 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage
 
+from app.api import metrics
 from app.auth.principal import Principal
 from app.config import settings
 from app.graph.state import COMPLETED, ERROR, STOP_REASONS
@@ -391,6 +392,7 @@ async def stream_turn(
                     "streamed": True,
                 },
             )
+            metrics.record_turn(ERROR, route, streamed=True, tools=tools)
 
             yield sse(
                 "error",
@@ -420,6 +422,7 @@ async def stream_turn(
                 "streamed": True,
             },
         )
+        metrics.record_turn(stop_reason, route, streamed=True, tools=tools)
 
         yield sse(
             "final",

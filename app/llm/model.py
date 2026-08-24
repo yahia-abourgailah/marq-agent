@@ -9,7 +9,7 @@ import logging
 
 from langchain_openai import ChatOpenAI
 
-from app.config import settings
+from app.config import reveal, settings
 
 logger = logging.getLogger("marq.llm")
 
@@ -68,7 +68,7 @@ def get_model(temperature: float | None = None) -> ChatOpenAI:
     return _Throttled(
         model=settings.model_name,
         base_url=settings.model_base_url,
-        api_key=settings.model_api_key,
+        api_key=reveal(settings.model_api_key),
         temperature=temperature,  # [claude] was unset
         timeout=30,
         max_retries=2,

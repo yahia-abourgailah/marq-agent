@@ -16,7 +16,7 @@ from psycopg.conninfo import make_conninfo  # [claude] see Database.__init__
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
-from app.config import settings
+from app.config import reveal, settings
 
 
 class Database:
@@ -285,7 +285,7 @@ app_db = Database(
     host=settings.postgres_host,
     port=settings.postgres_port,
     user=settings.postgres_readonly_user or settings.postgres_user,
-    password=(
+    password=reveal(
         settings.postgres_readonly_password
         if _READ_ONLY
         else settings.postgres_password

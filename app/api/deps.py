@@ -14,6 +14,7 @@ from typing import Annotated, Any
 
 from fastapi import Depends, Header, Request, status
 
+from app.api import metrics
 from app.api.errors import ApiError
 from app.api.ratelimit import RateLimiter
 from app.auth.jwt import AuthError, TokenVerifier
@@ -199,6 +200,8 @@ def _enforce_rate_limit(principal: Principal) -> None:
     # Cheap, and only on the request that is already being rejected.
     if not allowed:
         limiter.prune()
+
+        metrics.record_rate_limited()
 
         logger.warning(
             "rate_limited",

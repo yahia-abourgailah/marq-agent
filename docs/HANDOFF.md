@@ -1300,6 +1300,82 @@ They exist partly to let this file shrink. The review noted the same
 reasoning living in `[claude]` comments, in here, and in commit messages —
 three places to update, two that drift.
 
+## Operational hardening — 24 August
+
+Four items from the production-readiness checklist, in the order they were
+worth doing.
+
+**Credentials are `SecretStr`.** The five credential fields render as
+`**********` in `str()` and `repr()`, so a password can no longer reach a
+traceback, a debug log line or an `f"{settings}"` by accident. `reveal()` is
+the only way out, which makes leaking one a deliberate act rather than an
+incidental format. Not a defence against an attacker — anything that can call
+`reveal()` can read the value — but those three routes are how credentials
+actually escape.
+
+The test for it produced a false positive on its first run: a substring scan
+reported the settings repr as leaking `postgres_password`, because on this
+fixture that password is a short word which also appears inside
+`postgres_db`, `postgres_user` and three other fields. The credential was
+masked correctly; the test was matching the wrong occurrence. It only scans
+secrets long enough to be distinctive now.
+
+**Metrics on `stop_reason`.** `/metrics`, unauthenticated like the health
+probes, counting turns by `stop_reason`/`route`/`streamed`, tool calls by
+name, and rate-limit rejections. `stop_reason` was built so an out-of-steps
+run stops passing for an answer; logging it made that investigable, counting
+it makes it alertable, which is the difference between finding the failure
+when you go looking and being told about it.
+
+Every label is a closed set by construction. No subject, thread id, request
+id or question text — those are unbounded *and* customer data, and the
+redaction rule in `logging_config.py` does not reach a metrics endpoint.
+`test_no_label_carries_customer_data` asserts it, which is what keeps the
+endpoint safe to leave open. `prometheus-client` was present transitively and
+is now declared, because a version bump elsewhere could otherwise remove an
+endpoint the monitoring stack is scraping.
+
+**A retention sweep.** `scripts/sweep_conversations.py`, reporting by
+default and deleting only with `--apply`. Checkpoints first, then the index
+row — the same order `threads.py` uses, because the reverse leaves a
+transcript with nothing pointing at it. A script rather than a background
+task: it deletes customer-derived data on a timer, and a sweep that runs
+because the process booted is a policy nobody chose. Point cron at it.
+
+**Signing-key rotation.** `jwt_public_key` accepts a PEM bundle and
+`jwt_secret_previous` covers the symmetric case, so the outgoing key stays
+valid while the incoming one takes over. Without a window, changing a signing
+key signs every user out mid-question — which is why, in practice, it never
+gets changed.
+
+Two details worth keeping:
+
+- **Only a signature failure falls through to the next key.** An expired
+  token fails identically against every key, so retrying it is wasted work
+  that also replaces the real reason with a signature complaint in the log a
+  support request is answered from.
+- **No `kid` handling, deliberately.** Selecting by key id needs a published
+  id-to-key mapping. Without JWKS, `kid` is a hint from the token about which
+  key to trust, and trying each key is equivalent while the algorithm stays
+  pinned.
+
+### The same bug, three times
+
+`dict_row` bit three separate queries — `rls_posture`, `expired` and
+`turn_count` all read `row[0]`, which is a `KeyError` rather than the first
+column. Each surfaced differently and the last one is the instructive one:
+
+- `rls_posture` raised the first time it ran.
+- `expired` looked correct on a fresh database, because a retention sweep
+  that matches nothing never unpacks a row. It raised the moment a window
+  was chosen that matched a real conversation.
+- `turn_count` passed every hermetic test, because `FakeConversations`
+  implements it correctly. The fake modelled the contract; only the real
+  query was broken.
+
+That last one is worth remembering: a fake that models the contract is
+necessary, and is not evidence that the implementation matches it.
+
 ## Open items
 
 ### Next up

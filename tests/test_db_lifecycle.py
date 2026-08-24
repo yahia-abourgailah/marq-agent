@@ -17,7 +17,7 @@ from __future__ import annotations
 import pytest
 import pytest_asyncio
 
-from app.config import settings
+from app.config import reveal, settings
 from app.db.connection import Database
 from app.db.state import build_state_pool, state_dsn
 from app.graph.checkpointer import (
@@ -160,7 +160,7 @@ async def database():
         host=settings.postgres_host,
         port=settings.postgres_port,
         user=settings.postgres_user,
-        password=settings.postgres_password,
+        password=reveal(settings.postgres_password),
         database=settings.postgres_db,
     )
 

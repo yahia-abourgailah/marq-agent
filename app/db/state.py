@@ -28,7 +28,7 @@ from psycopg.conninfo import make_conninfo
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
-from app.config import Settings, settings
+from app.config import Settings, reveal, settings
 
 
 def state_dsn(config: Settings | None = None) -> str:
@@ -40,7 +40,7 @@ def state_dsn(config: Settings | None = None) -> str:
         host=config.postgres_host,
         port=config.postgres_port,
         user=config.postgres_user,
-        password=config.postgres_password,
+        password=reveal(config.postgres_password),
         dbname=config.postgres_db,
     )
 

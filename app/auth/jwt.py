@@ -14,10 +14,41 @@ from __future__ import annotations
 from pathlib import Path
 
 import jwt
-from jwt import PyJWTError
+from jwt import InvalidSignatureError, PyJWTError
 
 from app.auth.principal import Principal
-from app.config import APP_ENV, Settings, settings
+from app.config import APP_ENV, Settings, reveal, settings
+
+_PEM_BOUNDARY = "-----BEGIN"
+
+
+def _split_pem(material: str) -> list[str]:
+    """
+    Split concatenated PEM blocks into individual keys.
+
+    [claude] Text before the first boundary is discarded rather than
+    treated as a key — PEM files routinely carry a comment header, and
+    passing one to a verifier produces an error that quotes the key
+    material.
+    """
+
+    text = (material or "").strip()
+
+    if not text:
+        return []
+
+    if _PEM_BOUNDARY not in text:
+        # Not PEM at all. Hand it over unchanged and let the verifier
+        # complain about it, rather than silently returning nothing.
+        return [text]
+
+    parts = text.split(_PEM_BOUNDARY)
+
+    return [
+        f"{_PEM_BOUNDARY}{part.rstrip()}"
+        for part in parts[1:]
+        if part.strip()
+    ]
 
 
 class AuthError(Exception):
@@ -68,11 +99,15 @@ class TokenVerifier:
         # public key.
         symmetric = self.algorithm.upper().startswith("HS")
 
-        self.key = (
-            self.settings.jwt_secret
-            if symmetric
-            else self._public_key()
+        # [claude] Keys, plural — see `verify`. During a rotation two are
+        # valid at once; the rest of the time this is a list of one.
+        self.keys = (
+            self._secrets() if symmetric else self._public_keys()
         )
+
+        # Kept so existing callers and tests reading `.key` still work; it
+        # is the key a *new* token is expected to be signed with.
+        self.key = self.keys[0] if self.keys else None
 
         if not self.key and not self.dev_mode:
             expected = "JWT_SECRET" if symmetric else "JWT_PUBLIC_KEY"
@@ -83,39 +118,83 @@ class TokenVerifier:
                 f"without a token issuer."
             )
 
-    def _public_key(self) -> str | None:
+    def _secrets(self) -> list[str]:
+        """Shared secrets for HS*: the current one, then any retired one."""
+
+        return [
+            reveal(secret)
+            for secret in (
+                self.settings.jwt_secret,
+                self.settings.jwt_secret_previous,
+            )
+            if reveal(secret)
+        ]
+
+    def _public_keys(self) -> list[str]:
         """
-        The verification key: a literal, or the contents of a file.
+        Every public key a token may legitimately be signed with.
 
-        [claude] The literal wins when both are configured, so an explicit
-        `JWT_PUBLIC_KEY` is never silently overridden by a stale file left
-        on disk.
+        [claude] A list, so a signing key can be rotated without an outage.
 
-        A configured path that does not exist raises rather than falling
-        back to None. Falling back would mean a typo in the path produced
-        "no key configured", which — in dev mode — degrades to accepting an
-        unsigned header instead of failing.
+        With one key there is no safe moment to change it: the instant the
+        new key is configured, every token already in a browser becomes
+        invalid, and every user is signed out mid-question. Accepting the
+        outgoing key alongside the incoming one turns that cliff into a
+        window — publish the new key, wait out the old token TTL, then
+        remove the old key.
+
+        The format is a PEM bundle: several `-----BEGIN PUBLIC KEY-----`
+        blocks concatenated, in either `JWT_PUBLIC_KEY` or the file at
+        `JWT_PUBLIC_KEY_PATH`. That is a format people already have tooling
+        for, and it needs no new configuration field.
+
+        No `kid` handling, deliberately. Selecting by key id needs a
+        published id-to-key mapping — JWKS — and without one, `kid` is a
+        hint from the token about which key to trust, which is not an input
+        worth honouring. Trying each key is equivalent while the algorithm
+        is pinned, and the list is two long during a rotation and one
+        otherwise.
+
+        The literal still wins over the file when both are configured, and
+        a configured path that does not exist still raises rather than
+        degrading to "no key".
         """
 
         if self.settings.jwt_public_key:
-            return self.settings.jwt_public_key
+            return _split_pem(self.settings.jwt_public_key)
 
         if not self.settings.jwt_public_key_path:
-            return None
+            return []
 
         path = Path(self.settings.jwt_public_key_path).expanduser()
 
         if not path.is_file():
             raise RuntimeError(
                 f"JWT_PUBLIC_KEY_PATH points at {str(path)!r}, which does "
-                f"not exist. Generate a development key with:\n"
+                f"not exist. Generate a development key with:\\n"
                 f"    python scripts/dev_token.py init"
             )
 
-        return path.read_text()
+        return _split_pem(path.read_text())
 
     def verify(self, token: str) -> Principal:
-        """Verify one token and return the caller it identifies."""
+        """
+        Verify one token and return the caller it identifies.
+
+        [claude] Tries every configured key, and only for a *signature*
+        failure.
+
+        That distinction is the whole design. An expired token, a wrong
+        audience or a missing claim will fail identically against every key,
+        so retrying them is wasted work that also replaces the real reason
+        with whatever the last key happened to say — and `reason` is what
+        goes in the log a support request is answered from.
+
+        Trying several keys is safe because the algorithm is pinned to the
+        one configured value. Without that pin this would be a way to widen
+        the classic confusion attack, since more keys means more chances for
+        a token to name one it can abuse.
+        """
 
         if not self.key:
             # Only reachable in dev mode, where get_principal never calls
@@ -123,10 +202,34 @@ class TokenVerifier:
             # Principal by taking a different path here.
             raise AuthError("no verification key configured")
 
+        last_error: Exception | None = None
+
+        for key in self.keys:
+            try:
+                return self._decode(token, key)
+            except InvalidSignatureError as exc:
+                # Signed by a different key. Try the next one — this is the
+                # rotation window, where two are legitimately in use.
+                last_error = exc
+                continue
+            except PyJWTError as exc:
+                # Expired, wrong audience, missing claim: every key will
+                # say the same thing, so report this one.
+                raise AuthError(type(exc).__name__) from exc
+
+        raise AuthError(
+            type(last_error).__name__
+            if last_error
+            else "InvalidSignatureError"
+        )
+
+    def _decode(self, token: str, key: str) -> Principal:
+        """Verify against exactly one key."""
+
         try:
             claims = jwt.decode(
                 token,
-                self.key,
+                key,
                 algorithms=[self.algorithm],
                 # [claude] Pinned to the one configured algorithm. Accepting
                 # a list the token can choose from is the classic JWT
@@ -145,9 +248,17 @@ class TokenVerifier:
                     "verify_iss": self.settings.jwt_issuer is not None,
                 },
             )
-        except PyJWTError as exc:
-            # Type only, never the exception text — see AuthError.
-            raise AuthError(type(exc).__name__) from exc
+        except PyJWTError:
+            # [claude] Raised on, not converted here.
+            #
+            # `verify` above needs to see the *type* to decide whether
+            # another key is worth trying — a signature failure means "not
+            # this key", anything else means "not any key". Converting to
+            # AuthError at this depth made every failure look alike, so the
+            # rotation loop never advanced past the first key and a token
+            # signed with the outgoing one was rejected. `verify` does the
+            # conversion, so the type still never crosses the boundary.
+            raise
 
         subject = claims.get(self.settings.jwt_subject_claim)
 

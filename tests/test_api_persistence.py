@@ -246,3 +246,75 @@ async def test_a_borrowed_pool_is_not_closed_by_the_handle(pool):
         async with conn.cursor() as cursor:
             await cursor.execute("SELECT 1 AS ok")
             assert (await cursor.fetchone())["ok"] == 1
+
+
+# ============================================================
+# Retention
+# ============================================================
+
+
+@pytest.mark.asyncio
+async def test_expired_returns_rows_that_can_be_unpacked(pool, subjects):
+    """
+    [claude] A one-line bug a passing test would have missed.
+
+    `expired()` read `row[0]` and `row[1]`. The pool uses `dict_row`, so
+    those are KeyErrors rather than columns — and it only raises when the
+    query actually returns something. A retention sweep on a fresh database
+    returns nothing, so the first run printed "nothing to do" and looked
+    correct; it raised the moment a window was chosen that matched a real
+    conversation.
+
+    So this asserts against rows that exist, which is the only version of
+    this test worth having.
+    """
+
+    alice, _ = subjects
+    conversations = ConversationRepository(pool)
+
+    await conversations.record_turn(
+        subject=alice,
+        thread_id="retention-probe",
+        thread_key=f"{alice}:retention-probe",
+        title="probe",
+        provenance=[],
+    )
+
+    # Everything, however recent.
+    everything = await conversations.expired(older_than_days=0)
+
+    assert any(
+        subject == alice and thread_id == "retention-probe"
+        for subject, thread_id in everything
+    )
+
+    for subject, thread_id in everything:
+        assert isinstance(subject, str)
+        assert isinstance(thread_id, str)
+
+    # A window nothing can be older than.
+    assert await conversations.expired(older_than_days=36_500) == []
+
+
+@pytest.mark.asyncio
+async def test_turn_count_reads_the_recorded_number(pool, subjects):
+    """
+    Read rather than derived from the transcript, because the transcript is
+    trimmed — past the context budget it stops being a count of anything.
+    """
+
+    alice, _ = subjects
+    conversations = ConversationRepository(pool)
+
+    assert await conversations.turn_count(alice, "no-such-thread") == 0
+
+    for _ in range(3):
+        await conversations.record_turn(
+            subject=alice,
+            thread_id="counted",
+            thread_key=f"{alice}:counted",
+            title="counted",
+            provenance=[],
+        )
+
+    assert await conversations.turn_count(alice, "counted") == 3

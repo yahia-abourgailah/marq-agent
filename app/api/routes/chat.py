@@ -21,6 +21,7 @@ import uuid
 from fastapi import APIRouter, Request, status
 from sse_starlette.sse import EventSourceResponse
 
+from app.api import metrics
 from app.api.deps import Conversations, CurrentPrincipal, Graph
 from app.api.errors import ApiError, request_id_of
 from app.api.schemas import ChatRequest, ChatResponse
@@ -154,6 +155,7 @@ async def chat(
                     "streamed": False,
                 },
             )
+            metrics.record_turn(ERROR, None, streamed=False)
             raise
 
     messages = result["messages"]
@@ -180,6 +182,12 @@ async def chat(
             "stop_reason": stop_reason,
             "streamed": False,
         },
+    )
+    metrics.record_turn(
+        stop_reason,
+        result.get("route"),
+        streamed=False,
+        tools=list(result.get("trace") or []),
     )
 
     # [claude] Recorded after the answer, not before. A question that raised

@@ -18,7 +18,9 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, Request, Response, status
+from prometheus_client import CONTENT_TYPE_LATEST
 
+from app.api import metrics
 from app.api.schemas import ComponentHealth, HealthResponse, ReadinessResponse
 from app.config import APP_ENV, settings
 from app.db.connection import app_db
@@ -175,6 +177,33 @@ async def readiness(request: Request, response: Response) -> ReadinessResponse:
         checkpointer=checkpointer,
         model=model,
         vector_index=vector_index,
+    )
+
+
+@router.get("/metrics", include_in_schema=False)
+async def metrics_endpoint() -> Response:
+    """
+    Prometheus exposition.
+
+    [claude] Unauthenticated, like the health probes and for the same
+    reason: a scraper should not need a CRM token, and requiring one means
+    the credential lives in the monitoring stack — which is a worse place
+    for it than anywhere it currently is.
+
+    What that exposes is counts: how many turns ended each way, how often
+    each tool ran, how often a caller was rate-limited. No subject, no
+    thread, no question, no request id — see the note in api/metrics.py.
+    Someone who can reach this learns the service is busy, which they could
+    also learn by reaching `/health`.
+
+    On a public network, restrict it at the ingress rather than here. A
+    token check on this route would be theatre while `/health/ready`
+    reports the same liveness beside it.
+    """
+
+    return Response(
+        content=metrics.render(),
+        media_type=CONTENT_TYPE_LATEST,
     )
 
 
