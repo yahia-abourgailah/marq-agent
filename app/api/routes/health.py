@@ -47,21 +47,52 @@ async def health() -> HealthResponse:
 
 
 async def _database() -> ComponentHealth:
+    """
+    [claude] Reports what the connection *can do*, not what it is called.
+
+    This used to read `app_db.is_read_only`, a configuration flag — while
+    `verify_read_only()`, which is documented in three places as the thing
+    that answers this question, was called by nothing at all. That is the
+    exact substitution this codebase already learned to distrust: the role
+    existed, was named correctly, and could read nothing.
+
+    The RLS posture is reported for the same reason one level along. A
+    migration having run says nothing about whether its policies have any
+    effect from this seat — see `Database.rls_posture`.
+    """
+
     try:
         async with app_db.connection() as conn:
             async with conn.cursor() as cursor:
                 await cursor.execute("SELECT 1 AS ok")
                 await cursor.fetchone()
+
+        writable = not await app_db.verify_read_only()
+        posture = await app_db.rls_posture()
     except Exception as exc:
         # Type only — a psycopg error's text carries DSN fragments.
         return ComponentHealth(ok=False, detail=type(exc).__name__)
 
-    return ComponentHealth(
-        ok=True,
-        detail=(
-            "read-only role" if app_db.is_read_only else "owning role"
-        ),
-    )
+    unsafe = [row for row in posture if row["verdict"] in ("inert", "blind")]
+
+    if unsafe:
+        return ComponentHealth(
+            ok=False,
+            detail="; ".join(
+                f"{row['table']}: RLS {row['verdict']}" for row in unsafe
+            ),
+        )
+
+    enforced = [row for row in posture if row["verdict"] == "enforced"]
+
+    detail = "read-only role" if not writable else "owning role"
+
+    if enforced:
+        detail += f", RLS enforced on {len(enforced)} table(s)"
+    elif posture:
+        detail += ", RLS not applied"
+
+    return ComponentHealth(ok=True, detail=detail)
 
 
 def _checkpointer(request: Request) -> ComponentHealth:

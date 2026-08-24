@@ -183,9 +183,15 @@ async def test_an_unreachable_database_fails_readiness(issuer, monkeypatch):
 @pytest.mark.asyncio
 async def test_readiness_names_which_role_the_database_uses(issuer, monkeypatch):
     """
-    Reports what the connection *is*, because configuration and reality came
-    apart once already: `marq_agent_ro` existed, looked configured, and had
-    no grants at all.
+    Reports what the connection *can do*, because configuration and reality
+    came apart once already: `marq_agent_ro` existed, looked configured, and
+    had no grants at all.
+
+    [claude] The probe used to read `app_db.is_read_only` — the configured
+    flag — while `verify_read_only()`, documented in three places as the
+    check, was called by nothing. The fake below now has to implement the
+    capability methods, which is the point: a stub that cannot answer "what
+    can this connection actually do" is a stub of the wrong thing.
     """
 
     from app.api.routes import health as module
@@ -219,6 +225,22 @@ async def test_readiness_names_which_role_the_database_uses(issuer, monkeypatch)
         def connection(self):
             return Conn()
 
+        async def verify_read_only(self):
+            return True
+
+        async def rls_posture(self, tables=("deals", "leads")):
+            return [
+                {
+                    "table": t,
+                    "enabled": False,
+                    "forced": False,
+                    "owned_by_this_role": False,
+                    "policies_for_this_role": 0,
+                    "verdict": "off",
+                }
+                for t in tables
+            ]
+
     monkeypatch.setattr(module, "app_db", Pool())
 
     app, _ = build_app(verifier=issuer.verifier())
@@ -226,7 +248,94 @@ async def test_readiness_names_which_role_the_database_uses(issuer, monkeypatch)
     async with client(app) as http:
         response = await http.get("/health/ready")
 
-    assert response.json()["database"]["detail"] == "read-only role"
+    detail = response.json()["database"]["detail"]
+
+    assert detail.startswith("read-only role")
+    # The standing exposure is named rather than left to be inferred from
+    # its absence.
+    assert "RLS not applied" in detail
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("verdict", ["inert", "blind"])
+async def test_an_unsafe_rls_posture_fails_readiness(
+    issuer, monkeypatch, verdict
+):
+    """
+    [claude] The two states that do not announce themselves.
+
+    `inert` — RLS enabled, this connection owns the table, FORCE not set.
+    The owner bypasses RLS, so the migration ran, the policies exist and
+    every row is visible to everyone. No error, no log line, and a
+    deployment that looks correct.
+
+    `blind` — RLS forced and no policy covers this role. Default-deny means
+    zero rows rather than an error, so the agent reports "there are no
+    deals" with total confidence.
+
+    One is a silent exposure and the other a silent outage. Both are
+    reachable by getting one environment variable wrong, which is why this
+    is a readiness failure rather than a log line.
+    """
+
+    from app.api.routes import health as module
+
+    class Cursor:
+        async def execute(self, *a):
+            return None
+
+        async def fetchone(self):
+            return {"ok": 1}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    class Conn:
+        def cursor(self):
+            return Cursor()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    class Pool:
+        is_read_only = False
+
+        def connection(self):
+            return Conn()
+
+        async def verify_read_only(self):
+            return False
+
+        async def rls_posture(self, tables=("deals", "leads")):
+            return [
+                {
+                    "table": "deals",
+                    "enabled": True,
+                    "forced": verdict == "blind",
+                    "owned_by_this_role": verdict == "inert",
+                    "policies_for_this_role": 0,
+                    "verdict": verdict,
+                }
+            ]
+
+    monkeypatch.setattr(module, "app_db", Pool())
+
+    app, _ = build_app(verifier=issuer.verifier())
+
+    async with client(app) as http:
+        response = await http.get("/health/ready")
+
+    body = response.json()
+
+    assert body["ready"] is False
+    assert body["database"]["ok"] is False
+    assert verdict in body["database"]["detail"]
 
 
 @pytest.mark.asyncio

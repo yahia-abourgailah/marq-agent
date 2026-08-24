@@ -153,9 +153,9 @@ Note: bare `python` may not be on PATH; the venv interpreter is
 `.venv/bin/python`.
 
 ```bash
-pytest                          # 886 hermetic, ~9s
+pytest                          # 888 hermetic, ~9s
 pytest -m "" --cov=app --cov-report=term-missing   # everything, 93%
-pytest -m integration           # 132, needs live model + PostgreSQL, ~3min
+pytest -m integration           # 141, needs live model + PostgreSQL, ~3min
 python -m evals.run             # 35 SQL cases
 python -m evals.graph_cases     # 18 whole-graph cases
 python -m evals.routing_cases   # 37 routing cases
@@ -1212,6 +1212,93 @@ stop it being broken, which is a feature rather than a fix.
 server. See "Not built (workspace)".
 
 ---
+
+## Production readiness — 24 August
+
+A separate review, scoring the project against what shipping to real CRM data
+needs. Four blockers; two were already closed by the workflow review the same
+day, and two were new and serious.
+
+### Blocker 3 — `002` would have failed on the day it was applied
+
+An RLS `USING` expression is evaluated with the **querying** role's
+privileges. The deals policy read `deal_percentages`, and `001` grants
+`marq_agent_ro` SELECT on exactly three tables — deals, leads, users. Applied
+as written, every deals query would have raised `permission denied for table
+deal_percentages`: a hard failure on the agent's primary table, not a wrong
+answer. `app_requester_subtree()` escaped it only by accident, because it
+reads `users`, which happens to be granted.
+
+The lookup is now behind `app_holds_deal_split()`, `SECURITY DEFINER` with a
+pinned `search_path`. Better than granting the table: `deal_percentages` is
+deliberately not in the catalogue, and a grant would make it readable by
+anything connecting as that role. A definer function exposes one question and
+nothing else.
+
+### Blocker 4 — RLS could be silently inert
+
+A table's owner bypasses RLS unless `FORCE ROW LEVEL SECURITY` is set, and
+this README records that an unset `POSTGRES_READONLY_USER` falls the pool
+back to the owning user. Applied that way, every policy is inert: full
+visibility, no error, no log line, and a deployment that looks correct
+because the migration ran and the policies exist.
+
+Measured on the development database: the application connects as `marq`,
+which **owns** both tables. That is the configuration this guards against,
+and it was the default one.
+
+`FORCE` is set now, and it has a deployment consequence worth knowing before
+anyone applies this: it makes the owner subject to policies that name only
+`marq_agent_ro`, so **the owner sees zero rows the moment `002` is applied**.
+Switch the pool to the read-only role *first*, then apply. Reversed, the
+application goes blind between the two steps. `migrations/README.md` carries
+the order.
+
+### The claim that could not have been true
+
+`002`'s header said it was "verified against the development fixture".
+`deal_percentages` does not exist there, so the deals policy could not have
+been created — and any check that did run would have run as the owner, who
+bypasses the thing being checked.
+
+`tests/test_rls_policies.py` is the verification it never had: a throwaway
+schema, the real predicates, `FORCE` on so an owner-run check means
+something. Eight cases covering both blockers, the deals/leads asymmetry,
+failing closed on no identity, and the pooled-connection case where a
+rolled-back GUC is `''` rather than NULL.
+
+### `verify_read_only()` was called by nothing
+
+Documented in three places as the check that distinguishes a configured role
+from a capable one — and the health probe read `app_db.is_read_only`, the
+configured flag, instead. The exact substitution this codebase already
+learned to distrust. Both it and the new `rls_posture()` are wired into
+`/health/ready` now, which fails on an `inert` or `blind` posture.
+
+### CI, on the seventh review that asked for it
+
+`.github/workflows/ci.yml` — ruff and the hermetic suite on every push. It
+kept slipping because it looks like it needs infrastructure; it does not.
+What it needed was three placeholder environment variables, because settings
+are constructed at import and the model client validates its key in its
+constructor. Verified by running the suite with only the checked-in template
+plus those three: 888 passed.
+
+The integration and eval suites are deliberately **not** in CI. They need a
+live endpoint, and that endpoint is non-deterministic — a gate that fails a
+correct change because a sampled answer landed differently teaches people to
+ignore the gate.
+
+### ADRs
+
+`docs/adr/` — five records for the decisions that shape everything else:
+guard-and-role, the `Domain` binding, the nested SQL agent, routing-not-
+handoff, vectors-find-readers-compute. Each says what was decided, what it
+was decided *against*, and what it costs.
+
+They exist partly to let this file shrink. The review noted the same
+reasoning living in `[claude]` comments, in here, and in commit messages —
+three places to update, two that drift.
 
 ## Open items
 

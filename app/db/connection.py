@@ -124,6 +124,97 @@ class Database:
 
         return False
 
+    async def rls_posture(self, tables: tuple[str, ...] = ("deals", "leads")):
+        """
+        What row-level security actually does for *this* connection.
+
+        [claude] Configuration says a migration ran. This says whether the
+        policies it created have any effect from the seat this process
+        occupies, which is a different question with a dangerous gap
+        between the two answers.
+
+        Two states are unsafe and neither announces itself:
+
+        `inert`
+            RLS is enabled, and this connection owns the table. A table's
+            owner bypasses RLS on that table unless `FORCE ROW LEVEL
+            SECURITY` is set. So the migration ran, the policies exist, and
+            every row is visible to everyone — with no error and no log
+            line. migrations/README.md records that an unset
+            `POSTGRES_READONLY_USER` falls the pool back to the owning
+            user, which is exactly how a deployment lands here by accident.
+
+        `blind`
+            RLS is forced and no policy covers this role. PostgreSQL's
+            default-deny means zero rows rather than an error, so the agent
+            answers "there are no deals" perfectly confidently. That is a
+            worse outage than the exposure it replaced, and it is the
+            failure the original migration header warned about.
+
+        Both are reported per table, because a half-applied migration is a
+        real state and a summary would hide it.
+        """
+
+        rows = []
+
+        async with self.connection() as conn:
+            async with conn.cursor() as cursor:
+                for table in tables:
+                    # [claude] Named columns, not positional. The pool uses
+                    # `dict_row`, so unpacking a row yields its *keys* — the
+                    # first version of this read the string "count" as an
+                    # integer and raised.
+                    await cursor.execute(
+                        """
+                        SELECT c.relrowsecurity                           AS enabled,
+                               c.relforcerowsecurity                      AS forced,
+                               pg_get_userbyid(c.relowner) = current_user AS is_owner,
+                               (
+                                   SELECT count(*) FROM pg_policies p
+                                   WHERE p.tablename = c.relname
+                                     AND (
+                                         p.roles = '{0}'
+                                         OR current_user = ANY (p.roles)
+                                     )
+                               )                                          AS policies
+                        FROM pg_class c
+                        JOIN pg_namespace n ON n.oid = c.relnamespace
+                        WHERE c.relname = %s AND n.nspname = 'public'
+                        """,
+                        (table,),
+                    )
+                    row = await cursor.fetchone()
+
+                    if row is None:
+                        continue
+
+                    enabled = bool(row["enabled"])
+                    forced = bool(row["forced"])
+                    is_owner = bool(row["is_owner"])
+                    policies = int(row["policies"] or 0)
+
+                    if not enabled:
+                        verdict = "off"
+                    elif is_owner and not forced:
+                        verdict = "inert"
+                    elif policies == 0:
+                        verdict = "blind"
+                    else:
+                        verdict = "enforced"
+
+                    rows.append(
+                        {
+                            "table": table,
+                            "enabled": enabled,
+                            "forced": forced,
+                            "owned_by_this_role": is_owner,
+                            "policies_for_this_role": policies,
+                            "verdict": verdict,
+                        }
+                    )
+
+        return rows
+
     async def connect(self) -> None:
         """Open the connection pool, rebuilding it if it was closed."""
         async with self._open_lock:
