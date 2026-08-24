@@ -100,8 +100,65 @@ def resolve_stop_reason(findings: list[dict[str, Any]] | None) -> str:
     return COMPLETED
 
 
+def collect_trace(
+    existing: list[str] | None, incoming: list[str] | None
+) -> list[str]:
+    """
+    [claude] Tool names for the turn in flight. Same shape as
+    `collect_findings`, and reset by the same signal.
+
+    Needs a reducer for the same reason `findings` does — two specialists
+    write it in one superstep — and needs a reset for the same reason too:
+    it is checkpointed, so without one, turn two would report turn one's
+    tools as its own.
+    """
+
+    if incoming is None:
+        return []
+
+    return [*(existing or []), *incoming]
+
+
 class AgentState(TypedDict):
+    # [claude] The transcript the model reads. Questions and answers only.
+    #
+    # It used to carry the working as well — every `AIMessage` bearing a
+    # tool call and every `ToolMessage` bearing its result — because the UI
+    # wanted to draw a pill per tool. That put four unrelated jobs on one
+    # channel, with different audiences, lifetimes and sensitivities, and
+    # all three of the problems it caused were real:
+    #
+    #   *  A `sql_query` payload is capped at 20,000 characters, roughly
+    #      5,000 tokens, and `add_messages` accumulates. Four or five data
+    #      turns filled a 32k context; the overflow arrived as a provider
+    #      error, was caught generically, and — because the state is
+    #      checkpointed — became the thread's permanent state. Every later
+    #      turn reloaded the same oversized history and failed the same
+    #      way. The conversation could not be recovered.
+    #
+    #   *  The research agent holds the one tool that sends text to a third
+    #      party and is documented as never seeing CRM rows. That was true
+    #      of its tools and false of its context: it read `messages`, which
+    #      held the rows an earlier deals turn had fetched.
+    #
+    #   *  Checkpoint blobs accumulated raw CRM rows — client names, unit
+    #      numbers — for the life of every conversation, putting CRM
+    #      retention rules on the conversation store.
+    #
+    # Rendering a tool pill never required the tool's *result* to be in the
+    # model's context. It required the tool's *name*. So the names travel
+    # in `trace` below and the payloads travel nowhere: they stay inside
+    # the agent's own run, where the ReAct loop needs them, and are dropped
+    # when it returns.
     messages: Annotated[list[AnyMessage], add_messages]
+
+    # [claude] Which tools ran this turn, in order. Names only — never
+    # arguments, never results. This is what the UI's tool pills and the
+    # API's `tools_used` are built from.
+    #
+    # Reset every turn by the supervisor, so it stays the size of one turn
+    # rather than growing with the conversation.
+    trace: Annotated[list[str], collect_trace]
 
     # [claude] Which domain handled the most recent turn, set by the
     # supervisor. Optional, so the single-domain graphs — which have no
@@ -181,6 +238,7 @@ class AgentState(TypedDict):
 
 __all__ = [
     "COMPLETED",  # [claude]
+    "collect_trace",  # [claude]
     "ERROR",  # [claude]
     "OUT_OF_STEPS",  # [claude]
     "REFUSED",  # [claude]

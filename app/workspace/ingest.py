@@ -173,7 +173,13 @@ def _index_chunks(
     if index is None or embedder is None:
         return 0, ()
 
-    chunks = build_chunks(entry, parsed)
+    # [claude] The encoder's own tokenizer decides chunk size, so chunks
+    # are packed against the real input window rather than a character
+    # estimate of it. `count_tokens` is optional on Embedder — a stub
+    # without one falls back to the character limits in chunking.py.
+    chunks = build_chunks(
+        entry, parsed, count_tokens=getattr(embedder, "count_tokens", None)
+    )
 
     if not chunks:
         return 0, ()

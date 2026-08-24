@@ -142,8 +142,14 @@ class WorkspaceService:
         question: str,
         limit: int = DEFAULT_SEARCH_LIMIT,
         file_id: str | None = None,
-    ) -> list[RetrievedChunk]:
-        """Semantic search across this workspace's files."""
+    ) -> tuple[list[RetrievedChunk], int]:
+        """
+        Semantic search across this workspace's files.
+
+        [claude] Returns the passages that cleared the relevance floor, and
+        how many were dropped for falling under it. See
+        MIN_RELEVANCE_SCORE in index.py.
+        """
 
         if self.index is None or self.embedder is None:
             raise WorkspaceUnavailable(
@@ -152,7 +158,7 @@ class WorkspaceService:
             )
 
         if not question.strip():
-            return []
+            return [], 0
 
         # Confirm the file belongs to this workspace before it is used as a
         # filter, so a wrong id is an error rather than an empty result the
@@ -162,12 +168,31 @@ class WorkspaceService:
 
         vector = self.embedder.embed_query(question)
 
-        return self.index.search(
+        hits = self.index.search(
             workspace_id,
             vector=vector,
             limit=limit,
             file_id=file_id,
         )
+
+        # [claude] The relevance floor, read off the encoder rather than
+        # written here.
+        #
+        # Nearest-neighbour search always returns neighbours. Asked about
+        # staffing policy, a workspace holding a unit schedule returned
+        # eight passages about units, scored around 0.1, formatted exactly
+        # like passages that answer the question. The mechanism is working
+        # as designed; showing its output unconditionally is the mistake.
+        #
+        # The number belongs to the model — see `min_relevance_score` on
+        # SentenceTransformerEmbedder. An encoder that does not declare one
+        # gets no floor, which is right for the token-hash fake the
+        # hermetic tests use: its scores have no calibrated meaning, and
+        # measured against it an unrelated query outscores a topical one.
+        floor = getattr(self.embedder, "min_relevance_score", 0.0) or 0.0
+        kept = [hit for hit in hits if hit.score >= floor]
+
+        return kept, len(hits) - len(kept)
 
     # ---------------------------------------------------------
     # Exact reads

@@ -44,6 +44,25 @@ class FakeEmbedder(Embedder):
     def embed_query(self, text: str) -> list[float]:
         return self._embed(text)
 
+    def count_tokens(self, text: str) -> int:
+        """
+        [claude] A real implementation, not the Protocol's stub.
+
+        This class subclasses `Embedder`, so when `count_tokens` was added
+        to the protocol it inherited a body that returns `None` — and
+        chunking, which asks the embedder for a token count, started
+        comparing `None` to an integer. Thirty-nine tests failed at once,
+        none of them about embedding.
+
+        Worth the note because the trap is general: adding a method to a
+        Protocol that concrete classes *subclass* silently gives every one
+        of them a None-returning implementation. The count here is a rough
+        word-piece stand-in — not accurate, but the right shape, which is
+        all the plumbing tests need.
+        """
+
+        return max(1, len(text) // 4)
+
     def _embed(self, text: str) -> list[float]:
         vector = [0.0] * self._dimension
 

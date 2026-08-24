@@ -31,7 +31,6 @@ from app.api.streaming import (
     provenance_of,
     run_config,
     stream_turn,
-    tools_used_in,
 )
 from app.db.repositories.conversations import make_title
 from app.graph.state import COMPLETED, ERROR
@@ -149,7 +148,10 @@ async def chat(
         answer=answer_of(messages),
         route=result.get("route"),
         specialists=list(result.get("plan") or []),
-        tools_used=tools_used_in(messages),
+        # [claude] From `trace`, not from the transcript. Tool payloads
+        # no longer travel in `messages` — see state.py — and the names are
+        # all this ever needed.
+        tools_used=list(result.get("trace") or []),
         provenance=records,
         charts=charts_of(drawn),
         stop_reason=stop_reason,

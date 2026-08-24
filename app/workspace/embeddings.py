@@ -34,6 +34,22 @@ from typing import Protocol, runtime_checkable
 DEFAULT_EMBEDDING_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 DEFAULT_EMBEDDING_DIMENSION = 384
 
+# [claude] The relevance floor for this encoder, calibrated rather than
+# adopted. Measured against a real seven-column deals export:
+#
+#     topical queries     top hit 0.304 - 0.448
+#     unrelated queries   top hit 0.024 - 0.172
+#
+# The 24 August review suggested "somewhere around 0.35-0.45" and said to
+# measure rather than take the number, which mattered: 0.35 would have
+# discarded "unit area in square metres", a question the sheet answers,
+# whose best hit is 0.304.
+#
+# 0.25 clears every noise hit measured and sits under every topical one.
+# Re-measure if the model changes — this describes a score distribution,
+# not a fact about cosine similarity.
+MIN_RELEVANCE_SCORE = 0.25
+
 
 @runtime_checkable
 class Embedder(Protocol):
@@ -48,6 +64,33 @@ class Embedder(Protocol):
 
     def embed_query(self, text: str) -> list[float]:
         """Embed one search query."""
+
+    @property
+    def min_relevance_score(self) -> float:
+        """
+        [claude] The cosine score below which this encoder's hits are noise.
+
+        On the encoder rather than in the search code, because it describes
+        *this model's* score distribution and nothing more general. A
+        different encoder has a different one, and the fake used in the
+        hermetic tests has none at all — it is a token hash whose scores
+        are arbitrary, and measured against it an unrelated query outscores
+        a topical one. Reading the floor from the model is what keeps a
+        number calibrated for one encoder from being applied to another.
+        """
+
+    def count_tokens(self, text: str) -> int:
+        """
+        [claude] Word-pieces this encoder would read `text` as.
+
+        Chunking needs this and cannot get it from character counts. The
+        input window is measured in word-pieces, and the ratio to
+        characters is not a constant: measured against this model, English
+        prose runs about 4.9 characters per piece, Arabic about 4.1, and a
+        rendered spreadsheet row about 2.6 — so one character limit is
+        either wrong for Arabic or wasteful for English, and wrong for
+        spreadsheets in every case.
+        """
 
 
 class SentenceTransformerEmbedder:
@@ -72,6 +115,36 @@ class SentenceTransformerEmbedder:
     @property
     def dimension(self) -> int:
         return self._dimension
+
+    @property
+    def min_relevance_score(self) -> float:
+        """
+        Calibrated against a real uploaded export — see
+        MIN_RELEVANCE_SCORE in index.py for the measurements.
+        """
+
+        return MIN_RELEVANCE_SCORE
+
+    def count_tokens(self, text: str) -> int:
+        """
+        [claude] The tokenizer's own count, not an estimate.
+
+        `max_seq_length` is enforced by truncation rather than by an error:
+        text past the window is silently dropped before it is embedded, so
+        an oversized chunk is not a failure anybody sees — it is a chunk
+        whose tail was never searchable. Measuring here is what lets
+        chunking guarantee that cannot happen.
+        """
+
+        model = self._load()
+
+        return len(model.tokenizer(text)["input_ids"])
+
+    @property
+    def max_input_tokens(self) -> int:
+        """The encoder's input window, in word-pieces."""
+
+        return int(getattr(self._load(), "max_seq_length", 128) or 128)
 
     def _load(self):
         """

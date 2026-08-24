@@ -255,6 +255,34 @@ class Settings(BaseSettings):
     expose_provenance: bool = True
 
     # ----------------------------------------------------------
+    # Context budget
+    # ----------------------------------------------------------
+    #
+    # [claude] How much conversation history a specialist may be handed,
+    # in tokens.
+    #
+    # The transcript no longer carries tool payloads (see graph/state.py),
+    # which removed the fast path to overflow. It does not remove the slow
+    # one: `messages` still accumulates a question and an answer per turn
+    # for the life of the thread, and a thread has no other bound on its
+    # length.
+    #
+    # What made this worth a hard limit rather than a warning is the
+    # failure mode. Overflow arrives as a provider error, is caught as a
+    # generic specialist failure, and — because the state is checkpointed —
+    # the oversized history is now the thread's permanent state. Every
+    # later turn reloads it and fails identically. The conversation cannot
+    # be recovered by the user, and nothing in the reply tells them to
+    # start a new one.
+    #
+    # 12,000 leaves room inside a 32k window for the system prompt, the
+    # tool schemas, the retrieved rows a turn actually needs, and the
+    # answer. It is a budget rather than a measurement — `usage_metadata`
+    # is logged per turn so the real figure can be observed and this tuned
+    # against it rather than guessed at again.
+    max_context_tokens: int = 12_000
+
+    # ----------------------------------------------------------
     # Uploads
     # ----------------------------------------------------------
     #

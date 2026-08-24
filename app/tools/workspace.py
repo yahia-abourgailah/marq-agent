@@ -233,10 +233,16 @@ def build_workspace_tools(service: WorkspaceService):
         set of rows meeting a condition.
 
         Pass file_id to search within one file.
+
+        Results are filtered by relevance. When `below_threshold` is above
+        zero, passages existed but none resembled the question closely
+        enough to be about it — if `result_count` is also zero, say the
+        uploaded files do not cover this rather than describing whatever
+        was nearest.
         """
 
         try:
-            hits = service.search(
+            hits, below = service.search(
                 _workspace_id(runtime), question=question, file_id=file_id
             )
         except Exception as exc:
@@ -255,6 +261,11 @@ def build_workspace_tools(service: WorkspaceService):
                 }
                 for hit in hits
             ],
+            # [claude] `complete: false` says these are a *sample*. It does
+            # not say they might be *irrelevant*, and those need different
+            # sentences from the agent: one calls for a caveat, the other
+            # for "the files do not cover this". Hence a separate field.
+            "below_threshold": below,
             "complete": False,
         }
 

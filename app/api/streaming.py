@@ -199,14 +199,17 @@ def answer_of(messages: list[Any]) -> str:
     return ""
 
 
-def tools_used_in(messages: list[Any]) -> list[str]:
-    """Every tool the agent called, in order. Shown in the trace."""
-
-    return [
-        call["name"]
-        for message in messages
-        for call in (getattr(message, "tool_calls", None) or [])
-    ]
+# [claude] `tools_used_in(messages)` was removed on 24 August 2026.
+#
+# It mined the transcript for tool calls, which only worked while the
+# transcript carried the agent's working — and carrying that working is
+# what leaked CRM rows into the research agent's context and filled the
+# context window (see state.py). The graph now publishes tool *names* on
+# `trace`, and the streaming path below has always collected them from
+# `on_tool_start` events instead.
+#
+# Deleted rather than left unused: a helper that reads tool calls out of
+# the transcript is an invitation to put the payloads back.
 
 
 def provenance_of(collector: provenance.Collector | None) -> list[dict[str, Any]]:
@@ -446,5 +449,4 @@ __all__ = [
     "run_config",
     "sse",
     "stream_turn",
-    "tools_used_in",
 ]

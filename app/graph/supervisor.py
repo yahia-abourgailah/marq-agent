@@ -312,11 +312,28 @@ def _conversation(messages: list[AnyMessage], limit: int = 6) -> list[dict]:
 
     Tool calls and tool results are dropped — they are an implementation
     detail of the previous turn and would swamp the classifier.
+
+    [claude] Filtered first, then sliced. It used to be the other way round,
+    and the order was the bug.
+
+    `messages[-limit:]` took the last six *raw* messages and only then
+    discarded tool traffic. A turn that made several tool calls filled that
+    window with tool-call `AIMessage`s and their `ToolMessage` results, all
+    of which are dropped — so the classifier was left with the current
+    question and nothing else. Workspace turns run to 28 steps, which makes
+    the reconciliation turns precisely the ones after which a follow-up lost
+    its history; and a bare follow-up with no history falls through
+    `parse_plan` to the `deals` fallback.
+
+    So `limit` now means six *exchanges*, which is what the parameter has
+    always read as. The transcript no longer carries tool traffic either —
+    see state.py — but this does not rely on that: a checkpoint written
+    before that change still replays through here correctly.
     """
 
     kept = []
 
-    for message in messages[-limit:]:
+    for message in messages:
         role = getattr(message, "type", None)
 
         if role == "human":
@@ -324,7 +341,7 @@ def _conversation(messages: list[AnyMessage], limit: int = 6) -> list[dict]:
         elif role == "ai" and str(message.content).strip():
             kept.append({"role": "assistant", "content": str(message.content)})
 
-    return kept
+    return kept[-limit:]
 
 
 def parse_plan(text: str) -> list[str]:

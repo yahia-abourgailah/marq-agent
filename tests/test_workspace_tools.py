@@ -487,7 +487,7 @@ async def test_replacing_a_file_removes_its_stale_chunks(service, tmp_path):
     )
     service.ingest_path("ws1", replacement)
 
-    hits = service.search("ws1", "alpha unique text", limit=10)
+    hits, _ = service.search("ws1", "alpha unique text", limit=10)
 
     assert all(hit.chunk.locator.file_id != first_id for hit in hits)
 

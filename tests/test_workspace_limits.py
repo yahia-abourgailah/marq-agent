@@ -277,11 +277,94 @@ def test_search_on_an_empty_query_returns_nothing_rather_than_everything(
 ):
     service.ingest_path("ws", sheet_with(5, tmp_path))
 
-    assert service.search("ws", "") == []
-    assert service.search("ws", "   ") == []
+    # [claude] `search` returns the passages that cleared the relevance
+    # floor and the number that did not — see MIN_RELEVANCE_SCORE.
+    assert service.search("ws", "") == ([], 0)
+    assert service.search("ws", "   ") == ([], 0)
 
 
 def test_search_never_returns_more_than_asked(service, tmp_path):
     service.ingest_path("ws", sheet_with(400, tmp_path))
 
-    assert len(service.search("ws", "amount", limit=3)) <= 3
+    hits, _ = service.search("ws", "amount", limit=3)
+
+    assert len(hits) <= 3
+
+
+# ============================================================
+# The relevance floor
+# ============================================================
+
+
+def test_an_unrelated_question_returns_nothing_rather_than_the_nearest_thing(
+    service, tmp_path
+):
+    """
+    [claude] From the 24 August review.
+
+    `min_score` defaulted to zero and no caller raised it, so every search
+    returned its eight nearest neighbours whatever was asked. A workspace
+    holding a unit schedule, asked about staffing policy, returned eight
+    passages about units — scored around 0.1 and formatted exactly like
+    passages that answer the question.
+
+    The handoff had recorded an earlier version of this expectation as
+    wrong: "it returns the nearest neighbours regardless — that is the
+    whole point". Right about the mechanism, wrong about what to do with
+    it. The nearest neighbour to an unrelated question is noise.
+
+    The fake embedder is a token hash, so this asserts the *plumbing* —
+    the floor is read off the encoder, applied, and the drops counted.
+
+    It deliberately does not assert that a topical question survives 0.25,
+    because measured against the fake an unrelated query scores 0.45 and a
+    topical one scores 0.04. Its scores carry no meaning, which is exactly
+    why the floor is a property of the encoder and why the fake declares
+    none. Whether 0.25 separates signal from noise is a question about the
+    real model, answered by measurement and recorded on
+    `SentenceTransformerEmbedder.min_relevance_score`.
+    """
+
+    service.ingest_path("ws", sheet_with(20, tmp_path))
+
+    # The fake declares no floor, so nothing is dropped on its account.
+    assert getattr(service.embedder, "min_relevance_score", None) is None
+
+    hits, below = service.search("ws", "amount", limit=8)
+
+    assert hits, "with no declared floor, retrieval is unfiltered"
+    assert below == 0
+
+
+def test_the_dropped_count_is_reported_not_swallowed(service, tmp_path):
+    """
+    "No results" and "results, all too weak" need different sentences from
+    the agent — the second is "your files do not cover this", which is a
+    useful answer rather than a shrug.
+    """
+
+    service.ingest_path("ws", sheet_with(20, tmp_path))
+
+    # An encoder declaring a floor nothing can clear: every neighbour
+    # becomes a drop, and the count has to say so.
+    real = service.embedder
+
+    class Impossible:
+        """Wraps the real fake, and declares an unreachable floor."""
+
+        min_relevance_score = 2.0
+
+        def __init__(self, inner):
+            self._inner = inner
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+    service.embedder = Impossible(real)
+    try:
+        hits, below = service.search("ws", "amount", limit=8)
+    finally:
+        service.embedder = real
+
+    assert hits == []
+    assert below > 0, "passages were dropped but the count did not say so"

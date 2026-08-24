@@ -173,6 +173,18 @@ def entry(kind: FileKind) -> WorkspaceFile:
 
 
 def test_sheet_chunks_carry_a_row_range_citation():
+    """
+    [claude] Asserts the citation and the coverage, not a chunk count.
+
+    Rows used to be cut at a fixed twenty regardless of how wide the sheet
+    was, which is what made the real exports so badly oversized. They are
+    packed to the encoder's window now, so the number of chunks is a
+    property of the sheet's shape — this sheet has one narrow column and
+    fits in one chunk, and a twelve-column sheet would produce many. What
+    must hold either way is that the ranges are contiguous, 1-based, and
+    account for every row.
+    """
+
     sheet = SheetContent(
         name="Deals",
         columns=(ColumnSpec("id", "number", 45),),
@@ -184,11 +196,52 @@ def test_sheet_chunks_carry_a_row_range_citation():
         ParsedFile(kind=FileKind.SPREADSHEET, sheets=(sheet,)),
     )
 
-    # 45 rows at 20 per chunk.
-    assert len(chunks) == 3
+    assert chunks
+    assert chunks[0].locator.row_start == 1
+    assert chunks[-1].locator.row_end == 45
+    assert chunks[0].locator.cite().startswith("book.xlsx [Deals] rows 1-")
 
-    assert chunks[0].locator.cite() == "book.xlsx [Deals] rows 1-20"
-    assert chunks[2].locator.cite() == "book.xlsx [Deals] rows 41-45"
+    # Contiguous, no gaps and no overlap — a row belongs to exactly one
+    # block, or a citation points somewhere the value is not.
+    expected = 1
+    for chunk in chunks:
+        assert chunk.locator.row_start == expected
+        expected = chunk.locator.row_end + 1
+
+    assert expected == 46
+
+
+def test_a_wide_sheet_packs_fewer_rows_per_chunk_than_a_narrow_one():
+    """
+    [claude] The property a fixed row count could not have.
+
+    The cost of a row is its column count times its content, so the same
+    twenty rows are a comfortable chunk in a one-column sheet and many
+    times the encoder's window in a twelve-column one. Packing adapts;
+    counting cannot.
+    """
+
+    def sheet_of(columns: int) -> SheetContent:
+        names = [f"column_name_{i}" for i in range(columns)]
+        return SheetContent(
+            name="Deals",
+            columns=tuple(ColumnSpec(n, "text", 40) for n in names),
+            rows=tuple(
+                {n: f"value-{n}-{r}" for n in names} for r in range(40)
+            ),
+        )
+
+    def chunk_count(columns: int) -> int:
+        return len(
+            build_chunks(
+                entry(FileKind.SPREADSHEET),
+                ParsedFile(
+                    kind=FileKind.SPREADSHEET, sheets=(sheet_of(columns),)
+                ),
+            )
+        )
+
+    assert chunk_count(12) > chunk_count(1)
 
 
 def test_sheet_chunks_repeat_column_names_so_values_carry_meaning():

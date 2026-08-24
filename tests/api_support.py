@@ -186,7 +186,15 @@ class StubGraph:
 
         self._record_sql()
 
-        result = {"messages": self._messages(), "route": self.route}
+        # [claude] `trace` carries the tool names, as the real graph now
+        # does. The transcript no longer holds the agent's working — tool
+        # payloads never enter shared state — so `tools_used` is read from
+        # here rather than mined out of `messages`. See state.py.
+        result = {
+            "messages": self._messages(),
+            "route": self.route,
+            "trace": list(self.tool_calls),
+        }
 
         if self.stop_reason is not None:
             result["stop_reason"] = self.stop_reason

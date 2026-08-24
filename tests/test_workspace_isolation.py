@@ -74,7 +74,7 @@ def test_search_never_crosses_twenty_workspaces(service):
         )
 
     for index in range(20):
-        hits = service.search(
+        hits, _ = service.search(
             f"tenant-{index}", "confidential alpha figures", limit=50
         )
 

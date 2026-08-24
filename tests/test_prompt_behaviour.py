@@ -11,6 +11,8 @@ The same cases are runnable as a report with `python -m evals.run`.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 
 from evals.cases import CASES
@@ -155,3 +157,98 @@ async def test_workspace_cases(workspace_setup):
             failures.append(f"{case.name}: {detail}\n  why: {case.why}")
 
     assert not failures, "\n\n".join(failures)
+
+
+# ============================================================
+# Chunks must fit the encoder that will embed them
+# ============================================================
+
+
+@pytest.mark.integration
+def test_no_chunk_exceeds_the_encoder_input_window():
+    """
+    [claude] From the 24 August review, which asked for exactly this
+    assertion and was right to.
+
+    `max_seq_length` is enforced by truncation, not by an error. An
+    oversized chunk therefore fails silently: nothing raises, the vector is
+    written, and the tail of the text was simply never searchable. The old
+    constants — 700 characters and 20 rows — were justified by a comment
+    that named the right window and got the conversion wrong, and no test
+    could have noticed.
+
+    This loads the real tokenizer and measures, over both lanes and over
+    Arabic as well as English, because the encoder was chosen for a CRM
+    that carries Arabic and XLM-R segments it far more aggressively.
+    """
+
+    from app.workspace.chunking import MAX_CHUNK_TOKENS, build_chunks
+    from app.workspace.embeddings import SentenceTransformerEmbedder
+    from app.workspace.models import (
+        ColumnSpec,
+        FileKind,
+        PageContent,
+        ParsedFile,
+        SheetContent,
+        WorkspaceFile,
+    )
+
+    encoder = SentenceTransformerEmbedder()
+
+    entry = WorkspaceFile(
+        file_id="wf_probe",
+        workspace_id="ws_probe",
+        filename="probe",
+        kind=FileKind.DOCUMENT,
+        byte_size=1,
+        ingested_at=datetime.now(UTC),
+    )
+
+    english = (
+        "The franchise reported a cancellation rate of 34.62 percent across "
+        "twenty six deals this quarter, materially above the company average "
+        "measured across all three hundred and fifteen deals on record. "
+    ) * 12
+    arabic = (
+        "تقرير عن معدل الإلغاء في الامتياز التجاري خلال الربع الحالي مقارنة "
+        "بالمتوسط العام للشركة عبر جميع الصفقات المسجلة في النظام حتى تاريخه. "
+    ) * 12
+
+    columns = [f"column_{i}" for i in range(9)]
+    sheet = SheetContent(
+        name="Q3 Tracker",
+        columns=tuple(ColumnSpec(c, "text", 60) for c in columns),
+        rows=tuple(
+            {c: f"{c}-value-{r}-A1204" for c in columns} for r in range(60)
+        ),
+    )
+
+    cases = {
+        "english document": ParsedFile(
+            kind=FileKind.DOCUMENT,
+            pages=(PageContent(number=1, text=english),),
+        ),
+        "arabic document": ParsedFile(
+            kind=FileKind.DOCUMENT,
+            pages=(PageContent(number=1, text=arabic),),
+        ),
+        "wide spreadsheet": ParsedFile(
+            kind=FileKind.SPREADSHEET, sheets=(sheet,)
+        ),
+    }
+
+    for label, parsed in cases.items():
+        chunks = build_chunks(
+            entry, parsed, count_tokens=encoder.count_tokens
+        )
+
+        assert chunks, f"{label} produced no chunks"
+
+        for chunk in chunks:
+            pieces = encoder.count_tokens(chunk.text)
+
+            assert pieces <= MAX_CHUNK_TOKENS, (
+                f"{label}: a chunk is {pieces} word-pieces against a "
+                f"{MAX_CHUNK_TOKENS} window — its tail will be truncated "
+                "before it is embedded, silently"
+            )

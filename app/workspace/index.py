@@ -183,6 +183,13 @@ class VectorIndex:
 
         `workspace_id` is positional and always applied. `file_id` narrows
         further, for "what does *this* file say" questions.
+
+        [claude] `min_score` is a capability offered here and a policy set
+        one layer up: WorkspaceService applies the calibrated floor and
+        reports what it dropped. Storage should be able to answer "nearest
+        eight"; deciding that the nearest eight are not good enough to show
+        anybody is a retrieval-quality judgement, and it belongs with the
+        rest of them.
         """
 
         qmodels = _qmodels()
