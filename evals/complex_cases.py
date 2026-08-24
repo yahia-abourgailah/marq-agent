@@ -79,6 +79,23 @@ class ComplexCase:
     # is most likely and least visible.
     expected_route: str | None = None
 
+    # [claude] Every specialist the turn should have run, and every tool.
+    #
+    # Added 24 August 2026, after a bug that survived precisely because
+    # nothing asserted these. The supervisor planned `deals, research`
+    # correctly and then handed each specialist the *whole* question; both
+    # declined the halves they could not answer and the turn produced
+    # nothing, four times out of four, while the deals agent held the
+    # figure the first half needed.
+    #
+    # `expected_route` could not catch it — the route was right. The answer
+    # assertions could not catch it — there were no such cases. Planning
+    # correctly and then answering nothing is invisible to every check that
+    # existed, which is why these two are separate from `expected_route`
+    # rather than folded into it.
+    expected_specialists: tuple[str, ...] = ()
+    expected_tools: tuple[str, ...] = ()
+
     # A multi-hop question legitimately needs more calls than a count.
     min_tool_calls: int = 1
     max_tool_calls: int = 6
@@ -378,6 +395,96 @@ COMPLEX_CASES: tuple[ComplexCase, ...] = (
         ),
         tags=("refusal",),
     ),
+
+    # ========================================================
+    # Two specialists, one question
+    # ========================================================
+    #
+    # [claude] The gap that let the orchestration bug ship.
+    #
+    # Orchestration has existed since 18 August and nothing asserted a
+    # two-specialist *answer*. The routing suite checks single-route
+    # classification; every case above runs one specialist. So a supervisor
+    # that planned `deals, research` perfectly and then produced nothing
+    # was invisible: the route was right, and there was no case whose
+    # answer depended on both halves arriving.
+    #
+    # These deliberately assert structure — both specialists ran, both
+    # tools ran, our own figure is present, and the answer does not report
+    # the other half as missing — rather than asserting what the web says.
+    # The market number changes weekly; the failure being guarded against
+    # does not.
+    ComplexCase(
+        name="both_halves_of_a_split_question_are_answered",
+        question=(
+            "How do our cancellation rates compare with the wider "
+            "Egyptian market?"
+        ),
+        expected_route="deals",
+        expected_specialists=("deals", "research"),
+        expected_tools=("sql_query", "web_search"),
+        # 70 cancelled of 315 deals = 22.22%. Asserted as "22.2" so an
+        # answer rounding to one decimal is not a failure.
+        answer_contains=("22.2",),
+        answer_excludes=(
+            "do not have access",
+            "cannot provide",
+            "handled separately",
+            "unable to provide",
+        ),
+        min_tool_calls=2,
+        max_tool_calls=6,
+        why=(
+            "Measured 0/4 before the fix. The supervisor planned both "
+            "specialists correctly and then handed each of them the whole "
+            "question; the deals agent read a question half of which it "
+            "could not answer and declined all of it, holding the 22.22% "
+            "the first half needed.\n\n"
+            "The exclusions are the assertion that matters. A turn where "
+            "one specialist answers and the other apologises still merges "
+            "into something that looks like a reply — it just has an "
+            "apology where the comparison should be, and only a human "
+            "reading it would notice."
+        ),
+        tags=("orchestration", "two-specialist"),
+    ),
+    ComplexCase(
+        name="a_split_comparison_reaches_the_leads_agent_too",
+        question=(
+            "Is our lead conversion rate better or worse than the Egyptian "
+            "property market average?"
+        ),
+        expected_specialists=("leads", "research"),
+        expected_tools=("sql_query", "web_search"),
+        answer_excludes=(
+            "do not have access",
+            "i cannot",
+            "handled separately",
+            "unable to provide",
+        ),
+        min_tool_calls=2,
+        max_tool_calls=6,
+        why=(
+            "The same failure through a different pair, because the first "
+            "attempt at the fix worked for the deals agent and not the "
+            "research one — one case would have reported the fix complete "
+            "when half of it was.\\n\\n"
+            "Phrased as a *comparison*, and that is not incidental. The "
+            "first version of this case asked 'what share of our leads go "
+            "stale, and what is the market doing' — a conjunction — and it "
+            "passed with the fix disabled, which made it worthless as a "
+            "guard. Two questions joined by 'and' are read as two "
+            "questions and each specialist answers its own; a comparison "
+            "reads as one question that a specialist can only half answer, "
+            "and that is the shape it declines. Checked by disabling the "
+            "fix and confirming this fails.\\n\\n"
+            "The research agent's own prompt was the second half of the "
+            "bug: it said to 'answer only the public half and say the "
+            "internal half is handled separately', and the model did the "
+            "second half and skipped the first, never searching at all."
+        ),
+        tags=("orchestration", "two-specialist"),
+    ),
 )
 
 
@@ -446,6 +553,21 @@ async def evaluate(case: ComplexCase, graph) -> tuple[bool, str]:
 
     if case.expected_route and route != case.expected_route:
         problems.append(f"routed to {route!r}, expected {case.expected_route!r}")
+
+    if case.expected_specialists:
+        ran = sorted(f["specialist"] for f in (result.get("findings") or []))
+
+        if ran != sorted(case.expected_specialists):
+            problems.append(
+                f"specialists {ran}, expected "
+                f"{sorted(case.expected_specialists)}"
+            )
+
+    used = list(result.get("trace") or [])
+
+    for tool in case.expected_tools:
+        if tool not in used:
+            problems.append(f"{tool} never ran (tools used: {used or 'none'})")
 
     if not case.min_tool_calls <= tool_calls <= case.max_tool_calls:
         problems.append(

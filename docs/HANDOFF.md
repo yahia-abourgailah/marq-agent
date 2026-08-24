@@ -160,7 +160,7 @@ python -m evals.run             # 35 SQL cases
 python -m evals.graph_cases     # 18 whole-graph cases
 python -m evals.routing_cases   # 37 routing cases
 QDRANT_URL="" python -m evals.workspace_cases   # 8 workspace cases
-python -m evals.complex_cases   # 12 multi-hop cases, through the supervisor
+python -m evals.complex_cases   # 14 multi-hop cases, through the supervisor
 ruff check .
 langgraph dev                   # Studio: marq_agent + three domain graphs
 
@@ -1146,6 +1146,58 @@ The finding was still worth acting on. The reviewer read `_thread_id()`,
 which does no validation, and **nothing asserted the bound anywhere**. A
 limit that is true only until someone widens the field is, from outside,
 indistinguishable from no limit. It is pinned now.
+
+### The orchestration bug, found by the full test run and fixed
+
+Not a review finding — found on 21 August while verifying the project, and
+pre-existing at `9833045`, which was checked in a worktree rather than
+assumed.
+
+**The supervisor planned two specialists correctly and then handed each of
+them the whole question.** Asked *"how do our cancellation rates compare with
+the wider Egyptian market"*, the plan came back `['deals', 'research']` every
+time — and the turn ran **zero tools** and declined. Measured 4/4. Isolated
+against the deals agent alone: asked *"what is our overall cancellation
+rate"* it calls `sql_query` and answers 22.22%; asked the split question it
+refuses. The data was there the whole time.
+
+That is the inverse of the failure this codebase usually guards against — not
+half an answer presented as whole, but no answer at all when both halves were
+obtainable.
+
+**It survived because nothing asserted a two-specialist answer.** The routing
+suite checks single-route classification; every complex case ran one
+specialist. A supervisor that plans perfectly and then answers nothing is
+invisible to `expected_route`, which was right, and to answer assertions,
+which did not exist for this shape.
+
+The fix is `SPLIT_SCOPE_PROMPT` in `builder.py`: when the plan holds more
+than one specialist, each is told **what its own part is**, that the rest is
+already being answered, and not to mention the other half. Two things about
+it are worth knowing:
+
+- **Stating the part positively was necessary.** The first version only said
+  what a specialist's part was *not* — "answer what your data covers, ignore
+  the rest". The deals agent took that correctly; the research agent did not.
+  It fixed on the half it must never touch, reported that it could not see
+  MarQ's figures, and never searched at all.
+- **The research agent's own prompt was the other half of the bug.** It said
+  to "answer only the public half and say the internal half is handled
+  separately", and the model did the second half and skipped the first. Two
+  instructions fought and the disclaimer won. That line now says to answer
+  the public half and say nothing about the internal one.
+
+Measured 0/4 before, **5/5 after**, with both `sql_query` and `web_search`
+running every time.
+
+`ComplexCase` gained `expected_specialists` and `expected_tools`, and two
+cases use them. Both were checked by disabling the fix and confirming they
+fail — which caught a third thing: the first version of the second case was
+phrased as a conjunction ("what share of leads go stale, *and* what is the
+market doing") and passed with the bug present. Two questions joined by "and"
+are read as two questions and each specialist answers its own. A *comparison*
+reads as one question a specialist can only half answer, and that is the
+shape it declines. The case is phrased as a comparison now.
 
 ### Not done
 

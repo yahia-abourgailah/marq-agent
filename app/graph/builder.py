@@ -79,6 +79,125 @@ Be brief. No preamble, no restating the question.
 """
 
 
+# [claude] What a specialist is told when it is answering half a question.
+#
+# The bug this exists for: the supervisor plans two specialists correctly,
+# and then hands each of them the *whole* question. The deals specialist,
+# asked "how do our cancellation rates compare with the wider Egyptian
+# market", reads a question it can only half answer and declines all of it —
+# no tools called, no query run — while holding the cancellation data the
+# first half needs. Measured 4 times out of 4, and reproduced against the
+# deals agent alone: asked "what is our overall cancellation rate" it calls
+# `sql_query` and answers 22.22%; asked the split question it refuses.
+#
+# So the turn produced no answer where a complete one was available. That is
+# the inverse of the failure this codebase usually guards against — not half
+# an answer presented as whole, but nothing at all when both halves were
+# obtainable.
+#
+# The wording matters in three places, each pinned by a case in
+# evals/complex_cases.py:
+#
+#   *  naming the other specialists, so "I do not have that data" stops
+#      being a reason to refuse and becomes someone else's job;
+#   *  forbidding the refusal explicitly, because a model that can only
+#      answer part of a question reaches for a caveat by default;
+#   *  forbidding the *description* of the missing part, because two
+#      specialists each apologising for the other's half is what synthesis
+#      then has to merge, and it merges them into an answer that is mostly
+#      apology.
+SPLIT_SCOPE_PROMPT = """\
+This question has more than one part, and you are answering only one part.
+
+YOUR PART: {mine}.
+{others} {is_are} answering the rest, in parallel with you. Both answers are
+merged afterwards, so the reader sees one reply.
+
+Answer your part in full, using your tools. Start with it.
+
+Do NOT refuse because the rest of the question is outside your data. The
+rest is not yours and is already being answered.
+Do NOT mention the other part, do NOT say it is handled separately, and do
+NOT apologise for it. Saying anything about it is the failure this
+instruction exists to prevent.
+
+If none of the question falls within your part, say only that, in one short
+sentence."""
+
+SPECIALIST_LABELS = {
+    "deals": "The deals specialist",
+    "leads": "The leads specialist",
+    "workspace": "The uploaded-files specialist",
+    "research": "The web research specialist",
+    "general": "The general specialist",
+}
+
+# [claude] What each specialist's half *is*, stated positively.
+#
+# The first version of this prompt only said what a specialist's part was
+# not — "answer the part your data covers, ignore the rest". Measured, the
+# deals agent took that correctly and the research agent did not: it read
+# "how do our cancellation rates compare with the market", fixed on the
+# half it must never touch, reported that it could not see MarQ's figures,
+# and never searched at all. Its own prompt was telling it to "say the
+# internal half is handled separately", so the two instructions fought and
+# the disclaimer won.
+#
+# Naming the half positively removes the ambiguity: there is nothing to
+# decide about which part is yours when you have been told what it is.
+SPECIALIST_SCOPES = {
+    "deals": "what MarQ's own CRM records show about deals",
+    "leads": "what MarQ's own CRM records show about leads",
+    "workspace": "what the files the user uploaded actually contain",
+    "research": (
+        "public information from outside the company — the market, the "
+        "industry, the wider world"
+    ),
+    "general": "the conversational part of the question",
+}
+
+
+def scope_to_own_part(history, plan, me: str):
+    """
+    Append the split-question instruction, when there is a split.
+
+    [claude] Returns `history` untouched for a single-specialist turn, so
+    the common case is byte-for-byte what it was and the single-domain
+    graphs — which have no plan at all — are unaffected.
+
+    Appended rather than prepended: it is the most recent thing the model
+    reads, and it is about *this* turn rather than about the agent, which
+    is what the system prompt is for.
+    """
+
+    others = [name for name in (plan or []) if name != me]
+
+    if not others:
+        return history
+
+    labelled = [
+        SPECIALIST_LABELS.get(name, f"The {name} specialist")
+        for name in others
+    ]
+
+    if len(labelled) == 1:
+        joined, is_are = labelled[0], "is"
+    else:
+        joined = ", ".join(labelled[:-1]) + f" and {labelled[-1]}"
+        is_are = "are"
+
+    return [
+        *history,
+        SystemMessage(
+            content=SPLIT_SCOPE_PROMPT.format(
+                mine=SPECIALIST_SCOPES.get(me, "the part your own data covers"),
+                others=joined,
+                is_are=is_are,
+            )
+        ),
+    ]
+
+
 def trim_for_model(messages, budget: int | None = None):
     """
     [claude] The history a specialist is handed, bounded by tokens.
@@ -231,6 +350,10 @@ def make_domain_node(
         # trim_for_model — overflow here is unrecoverable, because the
         # oversized state is checkpointed and every later turn reloads it.
         history = trim_for_model(state["messages"])
+
+        # [claude] Told which part of the question is its own, when the
+        # supervisor split it. See SPLIT_SCOPE_PROMPT.
+        history = scope_to_own_part(history, state.get("plan"), domain.name)
 
         try:
             result = await agent.ainvoke(
@@ -516,6 +639,7 @@ def build_supervisor_graph(checkpointer=None):
             stop_reason = COMPLETED
 
             history = trim_for_model(state["messages"])
+            history = scope_to_own_part(history, state.get("plan"), name)
 
             try:
                 if agent is None:
