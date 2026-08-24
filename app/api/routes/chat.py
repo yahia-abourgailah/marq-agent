@@ -18,11 +18,11 @@ import json
 import logging
 import uuid
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, status
 from sse_starlette.sse import EventSourceResponse
 
 from app.api.deps import Conversations, CurrentPrincipal, Graph
-from app.api.errors import request_id_of
+from app.api.errors import ApiError, request_id_of
 from app.api.schemas import ChatRequest, ChatResponse
 from app.api.streaming import (
     answer_of,
@@ -32,6 +32,7 @@ from app.api.streaming import (
     run_config,
     stream_turn,
 )
+from app.config import settings
 from app.db.repositories.conversations import make_title
 from app.graph.state import COMPLETED, ERROR
 from app.sql import provenance
@@ -43,9 +44,58 @@ router = APIRouter(tags=["chat"])
 
 
 def _thread_id(requested: str | None) -> str:
-    """Continue a conversation, or start one."""
+    """
+    Continue a conversation, or start one.
+
+    [claude] No validation here, deliberately — `ChatRequest.thread_id`
+    bounds the length and the character set before this is reached, and a
+    second check in a second place is a second thing to keep in step. The
+    24 August review read this function alone and concluded an unbounded id
+    was accepted; it is not, but nothing asserted the bound, so
+    `test_invalid_bodies_are_refused` now covers it.
+    """
 
     return requested or uuid.uuid4().hex
+
+
+async def _check_thread_length(
+    conversations: Conversations, principal, thread_id: str
+) -> None:
+    """
+    Refuse a thread that has outgrown itself, in words rather than by failing.
+
+    [claude] This is the review's S1, and the point is the *message*.
+
+    Trimming already stops a long thread breaking — it no longer overflows
+    the context window. What trimming cannot do is tell the user that the
+    beginning of their conversation is no longer being read. Past this many
+    turns the agent is answering from a window over a much longer history,
+    and the honest thing is to say so and start a fresh thread rather than
+    to quietly answer with less context than the user believes it has.
+
+    The failure this replaces was the worst kind: a provider error, caught
+    as a generic specialist failure, on a checkpointed state that made every
+    later turn fail identically — with nothing in the reply telling anyone
+    to start a new conversation.
+    """
+
+    if settings.max_turns_per_thread <= 0:
+        return
+
+    turns = await conversations.turn_count(principal.subject, thread_id)
+
+    if turns < settings.max_turns_per_thread:
+        return
+
+    raise ApiError(
+        status.HTTP_409_CONFLICT,
+        "thread_too_long",
+        (
+            f"This conversation has reached {turns} turns, which is as long "
+            "as one thread runs. Start a new conversation to carry on — the "
+            "existing one stays readable in your history."
+        ),
+    )
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -66,6 +116,8 @@ async def chat(
 
     thread_id = _thread_id(body.thread_id)
     thread_key = principal.thread_key(thread_id)
+
+    await _check_thread_length(conversations, principal, thread_id)
 
     logger.info(
         "chat_turn",
@@ -176,6 +228,8 @@ async def chat_stream(
 
     thread_id = _thread_id(body.thread_id)
     thread_key = principal.thread_key(thread_id)
+
+    await _check_thread_length(conversations, principal, thread_id)
 
     logger.info(
         "chat_turn_stream",

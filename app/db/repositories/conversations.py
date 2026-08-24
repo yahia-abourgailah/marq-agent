@@ -230,6 +230,50 @@ class ConversationRepository:
 
                 return cursor.rowcount > 0
 
+    async def expired(self, older_than_days: int) -> list[tuple[str, str]]:
+        """
+        Conversations untouched for longer than the retention window.
+
+        [claude] Returns `(subject, thread_id)` rather than deleting,
+        because the checkpoints are the larger half of what has to go and
+        this class does not hold the saver. The route that owns deletion
+        already sequences it correctly — checkpoints first, index last, so
+        a failure leaves a listable conversation rather than an orphan —
+        and a sweep should reuse that order rather than invent a second one.
+        """
+
+        async with self.pool.connection() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(
+                    "SELECT subject, thread_id FROM conversations "
+                    "WHERE updated_at < now() - make_interval(days => %s) "
+                    "ORDER BY updated_at",
+                    (older_than_days,),
+                )
+
+                return [(row[0], row[1]) for row in await cursor.fetchall()]
+
+    async def turn_count(self, subject: str, thread_id: str) -> int:
+        """
+        Turns recorded on one thread. Zero when there is no such thread.
+
+        [claude] Read rather than derived from the transcript, because the
+        transcript is trimmed: past the context budget it stops being a
+        count of anything. The row has always carried this; nothing
+        enforced it against a limit.
+        """
+
+        async with self.pool.connection() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(
+                    "SELECT turn_count FROM conversations "
+                    "WHERE subject = %s AND thread_id = %s",
+                    (subject, thread_id),
+                )
+                row = await cursor.fetchone()
+
+                return int(row[0]) if row else 0
+
 
 __all__ = [
     "TITLE_MAX_CHARS",

@@ -15,6 +15,7 @@ from typing import Annotated, Any
 from fastapi import Depends, Header, Request, status
 
 from app.api.errors import ApiError
+from app.api.ratelimit import RateLimiter
 from app.auth.jwt import AuthError, TokenVerifier
 from app.auth.principal import Principal
 from app.config import settings
@@ -141,7 +142,79 @@ async def get_principal(
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
 
+    _enforce_rate_limit(principal)
+
     return principal
+
+
+# [claude] One limiter per process, built lazily so `settings` is read at
+# first use rather than at import — which is what lets a test override the
+# limit without reimporting the module.
+_limiter: RateLimiter | None = None
+
+
+def get_rate_limiter() -> RateLimiter:
+    global _limiter
+
+    if _limiter is None or _limiter.per_minute != settings.rate_limit_per_minute:
+        _limiter = RateLimiter(settings.rate_limit_per_minute)
+
+    return _limiter
+
+
+def reset_rate_limiter() -> None:
+    """
+    [claude] Drop the counters. Used by the test suite between cases.
+
+    A process-wide limiter is right in production and wrong for a suite
+    that makes hundreds of requests as one subject — without this, the
+    first thirty tests pass and the rest get 429s that have nothing to do
+    with what they assert. Exposed as a function rather than having tests
+    reach for the module global, so the reset survives the limiter being
+    reimplemented.
+    """
+
+    global _limiter
+
+    _limiter = None
+
+
+def _enforce_rate_limit(principal: Principal) -> None:
+    """
+    [claude] Applied after the token is verified, on purpose.
+
+    Keying on the subject means the key has to be trustworthy, and it is
+    only trustworthy once the signature has been checked. Rate-limiting
+    before authentication would mean limiting on something the caller
+    controls, which is not a limit.
+
+    The cost is that an unauthenticated flood still reaches the verifier.
+    That is cheap — a signature check, no database, no model — and it is
+    the right place to stop it if it ever needs stopping.
+    """
+
+    limiter = get_rate_limiter()
+    allowed, retry_after = limiter.check(principal.subject)
+
+    # Cheap, and only on the request that is already being rejected.
+    if not allowed:
+        limiter.prune()
+
+        logger.warning(
+            "rate_limited",
+            extra={
+                "subject": principal.subject,
+                "limit_per_minute": settings.rate_limit_per_minute,
+                "retry_after": retry_after,
+            },
+        )
+
+        raise ApiError(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "rate_limited",
+            "Too many requests. Wait a moment and try again.",
+            headers={"Retry-After": str(retry_after)},
+        )
 
 
 # [claude] Annotated aliases rather than `= Depends(...)` defaults. Same

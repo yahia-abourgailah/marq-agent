@@ -1,6 +1,6 @@
 # marq-agent — handoff
 
-State as of `dev`, 21 August 2026.
+State as of `dev`, 24 August 2026.
 Read this first in a new session; it replaces having the previous conversation.
 
 **Where things stand.** The agent is reachable over HTTP, has a local UI in
@@ -153,7 +153,7 @@ Note: bare `python` may not be on PATH; the venv interpreter is
 `.venv/bin/python`.
 
 ```bash
-pytest                          # 851 hermetic, ~10s
+pytest                          # 886 hermetic, ~9s
 pytest -m "" --cov=app --cov-report=term-missing   # everything, 93%
 pytest -m integration           # 132, needs live model + PostgreSQL, ~3min
 python -m evals.run             # 35 SQL cases
@@ -1045,6 +1045,121 @@ Five variants found, all producing a confident wrong number rather than an error
 
 Fixed by catalogue rules; expect new variants. A stronger model for the SQL
 agent is the alternative lever.
+
+## The 24 August review
+
+Twelve findings across memory, workflow, RAG and session handling. Eleven
+were acted on; one was already closed and is recorded below as such, because
+a review finding that turns out to be wrong is worth writing down too.
+
+### The one change that closed three findings
+
+`messages` was doing four jobs — model context, UI trace, the `tools_used`
+record, and cross-specialist memory — with different audiences, lifetimes and
+sensitivities. That single conflation surfaced as three separate defects:
+
+- **M1**: a `sql_query` payload is capped at 20,000 characters and
+  `add_messages` accumulates, so four or five data turns filled the context
+  window. The overflow arrived as a provider error, was caught as a generic
+  specialist failure, and — because the state is checkpointed — became the
+  thread's *permanent* state. Every later turn reloaded it and failed
+  identically, with nothing in the reply telling the user to start again.
+- **A1**: the research agent, which holds the one tool that sends text to a
+  third party and is documented as never seeing CRM rows, read those rows out
+  of the same shared history.
+- **M2**: checkpoint blobs accumulated client names and unit numbers for the
+  life of every conversation.
+
+Rendering a tool pill never needed the tool's *result*, only its *name*. So
+names travel on a new `trace` channel and payloads travel nowhere — they stay
+inside the agent's own run, where the ReAct loop needs them, and are dropped
+when it returns. `tools_used_in` was deleted rather than left unused: a
+helper that mines the transcript for tool calls is an invitation to put the
+payloads back.
+
+The tests for this assert on **the channel**, not on the research agent. The
+leak was never a property of that agent; it was a property of the channel
+every agent shares.
+
+### Measure, do not estimate
+
+The review said this twice and was right both times. Both numbers it offered
+turned out to be wrong in the direction that mattered.
+
+**Chunk size (R1).** The old constants were 700 characters and 20 rows,
+justified by a comment naming the right 128-token window and getting the
+conversion wrong. The encoder truncates rather than raising, so nothing ever
+failed — the tails were simply never embedded. Measured against the real
+tokenizer:
+
+    english prose        621 chars = 128 word-pieces
+    arabic prose         522 chars = 128 word-pieces
+    twenty real rows    2741 chars = 1007 word-pieces
+
+The review estimated 6–8 rows per chunk. Measurement said **two**. On a real
+uploaded export, 13 of 15 chunks were over the window and 408 word-pieces
+were never embedded; after packing by tokens, zero and zero, at a cost of six
+more chunks. Chunks are now packed against the encoder's own tokenizer where
+one is available, with measured character limits as the fallback for
+hermetic tests. A single row too wide to pack is split across chunks sharing
+its locator rather than silently truncated.
+
+**Relevance floor (R2).** The review suggested "around 0.35–0.45" and said to
+calibrate. Measured against a real seven-column export:
+
+    topical queries     top hit 0.304 - 0.448
+    unrelated queries   top hit 0.024 - 0.172
+
+0.35 would have discarded *"unit area in square metres"* — a question the
+sheet answers. The floor is **0.25**, and it lives on the encoder
+(`min_relevance_score`) rather than in the search code, because it describes
+one model's score distribution and nothing more general. The token-hash fake
+used in hermetic tests declares none, which is correct: measured against it
+an unrelated query scores 0.45 and a topical one 0.04, so a number calibrated
+for the real encoder is meaningless there.
+
+`search` now returns `(hits, below_threshold)`. "No results" and "results,
+all too weak" need different sentences from the agent — the second is "your
+files do not cover this", which is a useful answer rather than a shrug.
+
+### The rest
+
+| | What changed |
+|---|---|
+| A2 | `_conversation` filters *then* slices. Taking the last six raw messages and only then dropping tool traffic left the classifier with the current question and nothing else, so a follow-up after a 28-step reconciliation fell through to the `deals` fallback. |
+| A3 | Specialist answers reach synthesis as **user-role** content in a fenced block. They are partly derived from pages written by strangers, and the system role gave that text the same standing as our own instructions at the one node that writes the visible answer. |
+| A4 | A process-wide `asyncio.Semaphore` on every model call — subclassed onto the model rather than wrapped, because `create_agent` calls it through interfaces this code never sees, and the nested calls are where the concurrency comes from. Plus a fixed-window rate limit keyed on the verified subject. |
+| M1 | `trim_messages` by token budget before every specialist call, and `usage_metadata` logged per turn so the ceiling is observed rather than estimated — which the review explicitly asked for. |
+| R3 | Identifiers take an exact path before the vector one. `A-1204` and `A-1240` are near-neighbours to a paraphrase encoder; the exact scan returns the row that actually holds the value. This is the review's named interim — hybrid sparse/dense retrieval is the real answer and needs a Qdrant server, which this machine does not have. |
+| R4 | `embedding_model` is stamped on every point, and ingestion refuses to add vectors from a different model than the collection holds. A dimension change already failed loudly; a *same-dimension* swap was the silent one. |
+| S1 | A turn cap that refuses in words — the failure it replaces was a generic specialist failure on a permanently broken thread. Plus `expired()` for an age-based sweep. |
+
+### S2 — already closed, and worth recording
+
+The review flagged an unbounded client-supplied `thread_id`: "a megabyte-long
+`thread_id` is accepted, stored, and indexed." It is not. `ChatRequest` caps
+it at 128 characters with a character-class pattern, and did so before the
+reviewed commit — verified against a live server, where 1 MB, 200 characters
+and `../../etc/passwd` all return 422.
+
+The finding was still worth acting on. The reviewer read `_thread_id()`,
+which does no validation, and **nothing asserted the bound anywhere**. A
+limit that is true only until someone widens the field is, from outside,
+indistinguishable from no limit. It is pinned now.
+
+### Not done
+
+A **rolling summary** for long threads — replacing the oldest exchanges with
+a short summary rather than dropping them. The review listed it third in
+effort order behind trimming, and trimming plus the turn cap closes the
+failure it was for: a long thread no longer breaks, and one that has outgrown
+itself now says so. The summary would make a long thread *better* rather than
+stop it being broken, which is a feature rather than a fix.
+
+**Hybrid sparse/dense retrieval** (R3's preferred form) — needs a Qdrant
+server. See "Not built (workspace)".
+
+---
 
 ## Open items
 

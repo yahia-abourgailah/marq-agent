@@ -428,7 +428,9 @@ async def evaluate(case: ComplexCase, graph) -> tuple[bool, str]:
     messages = result["messages"]
     route = result.get("route")
 
-    tool_calls = sum(1 for m in messages if getattr(m, "type", "") == "tool")
+    # [claude] From `trace` — the transcript no longer carries the agent's
+    # working. See the note in graph_cases.evaluate.
+    tool_calls = len(result.get("trace") or [])
     answer = str(messages[-1].content)
     lowered = answer.lower()
 

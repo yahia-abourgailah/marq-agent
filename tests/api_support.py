@@ -324,6 +324,17 @@ class FakeConversations:
 
         return self.rows[(subject, thread_id)].turn_count
 
+    async def turn_count(self, subject, thread_id):
+        """
+        [claude] Mirrors the real repository, which reads the recorded count
+        rather than deriving one from the transcript — the transcript is
+        trimmed, so past the context budget it counts nothing useful.
+        """
+
+        row = self.rows.get((subject, thread_id))
+
+        return row.turn_count if row else 0
+
     async def provenance_for(self, thread_key):
         return self.turns.get(thread_key, [])
 

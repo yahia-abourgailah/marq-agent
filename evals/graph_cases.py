@@ -411,13 +411,19 @@ async def evaluate(case: GraphCase, graph) -> tuple[bool, str]:
     )
 
     messages = result["messages"]
-    tool_calls = sum(1 for m in messages if getattr(m, "type", "") == "tool")
 
-    used = [
-        call["name"]
-        for message in messages
-        for call in getattr(message, "tool_calls", []) or []
-    ]
+    # [claude] Read from `trace`, not from the transcript.
+    #
+    # Counting `ToolMessage`s in `messages` worked only while the agent's
+    # working was written back into shared state — and carrying that
+    # working is what filled the context window and handed CRM rows to the
+    # research agent (see graph/state.py). The graph publishes tool names
+    # on `trace` now; the payloads never leave the agent's own run.
+    #
+    # This is the second time these suites have gone to 0 over where the
+    # trace lives. The first was collect mode returning findings alone.
+    used = list(result.get("trace") or [])
+    tool_calls = len(used)
 
     answer = str(messages[-1].content)
     lowered = answer.lower()

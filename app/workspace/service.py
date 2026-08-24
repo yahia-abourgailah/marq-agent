@@ -198,6 +198,70 @@ class WorkspaceService:
     # Exact reads
     # ---------------------------------------------------------
 
+    def find_identifier(
+        self, workspace_id: str, token: str, limit: int = 20
+    ) -> list[dict[str, Any]]:
+        """
+        Exact cell matches for one identifier, across every uploaded sheet.
+
+        [claude] From the 24 August review (R3). The spreadsheet lane
+        indexes CRM exports — unit numbers, deal ids, client names, project
+        codes — and a 384-dimension paraphrase model is built for semantic
+        similarity, not exact token matching. `A-1204` and `A-1240` sit
+        close together in that space, and neither reliably beats a row that
+        is merely *about* units.
+
+        The review's own preferred fix is hybrid retrieval: a BM25-style
+        sparse index alongside the dense one, fused with RRF, which Qdrant
+        supports in the same collection. That is the right answer and it is
+        not this — it needs a Qdrant server, and there is none on this
+        machine (embedded mode ignores payload indexes). This is the
+        interim the review names: the exact path already exists, so use it
+        first and fall back to vectors.
+
+        Case-insensitive and whitespace-trimmed, because a user typing an
+        identifier out of an email will not match its stored casing, and an
+        exact-match tool that is exact about the wrong things is worse than
+        no tool.
+        """
+
+        needle = token.strip().casefold()
+
+        if not needle:
+            return []
+
+        matches: list[dict[str, Any]] = []
+
+        for entry in self.list_files(workspace_id):
+            if entry.kind is not FileKind.SPREADSHEET:
+                continue
+
+            parsed = self.load_parsed(workspace_id, entry.file_id)
+
+            for sheet in parsed.sheets:
+                for position, row in enumerate(sheet.rows, start=1):
+                    if not any(
+                        str(value).strip().casefold() == needle
+                        for value in row.values()
+                        if value is not None
+                    ):
+                        continue
+
+                    matches.append(
+                        {
+                            "file_id": entry.file_id,
+                            "source": (
+                                f"{entry.filename} [{sheet.name}] row {position}"
+                            ),
+                            "row": dict(row),
+                        }
+                    )
+
+                    if len(matches) >= limit:
+                        return matches
+
+        return matches
+
     def read_rows(
         self,
         workspace_id: str,

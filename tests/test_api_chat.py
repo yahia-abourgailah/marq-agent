@@ -212,6 +212,21 @@ async def test_an_internal_failure_leaks_nothing(issuer):
         {"message": "x" * 4001},
         {"message": "hi", "thread_id": "../../etc/passwd"},
         {"message": "hi", "thread_id": ""},
+        # [claude] The length bound, added 24 August 2026.
+        #
+        # The review raised an unbounded `thread_id` — "a megabyte-long
+        # thread_id is accepted, stored, and indexed" — reading
+        # `_thread_id()`, which does no validation. It is in fact rejected:
+        # `ChatRequest` caps it at 128 characters before that function is
+        # ever reached, and has since before the reviewed commit.
+        #
+        # The finding was still worth acting on. Nothing asserted the
+        # length, so the bound was true only for as long as nobody widened
+        # the field — which is indistinguishable, from outside, from not
+        # having a bound at all. That is what a reviewer reading the
+        # handler could see, and it is now pinned.
+        {"message": "hi", "thread_id": "a" * 129},
+        {"message": "hi", "thread_id": "a" * 100_000},
     ],
 )
 async def test_invalid_bodies_are_refused(issuer, body):

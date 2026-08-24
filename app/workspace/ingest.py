@@ -186,7 +186,13 @@ def _index_chunks(
 
     try:
         vectors = embedder.embed_documents([chunk.text for chunk in chunks])
-        return index.upsert(chunks, vectors), ()
+        model_name = getattr(embedder, "model_name", None)
+
+        # [claude] Checked before writing, so a model swap cannot mix two
+        # embedding spaces in one collection. See check_embedding_model.
+        index.check_embedding_model(model_name)
+
+        return index.upsert(chunks, vectors, embedding_model=model_name), ()
     except Exception as exc:
         return 0, (
             "This file was stored and can be read directly, but it could "

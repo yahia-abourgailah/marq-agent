@@ -65,6 +65,10 @@ def point_id(chunk_id: str) -> str:
     return str(uuid.uuid5(POINT_NAMESPACE, chunk_id))
 
 
+class IndexModelMismatch(RuntimeError):
+    """The collection holds vectors from a different encoder."""
+
+
 class VectorIndex:
     """Chunk storage and similarity search for uploaded files."""
 
@@ -125,12 +129,89 @@ class VectorIndex:
                 # on every startup to discover what we already know.
                 pass
 
+    def stored_embedding_model(self) -> str | None:
+        """
+        The model that built the vectors already in this collection.
+
+        [claude] Read from a single point rather than tracked separately,
+        so it cannot disagree with the vectors it describes. Returns None
+        for an empty collection, and for one written before this was
+        recorded — neither is a mismatch, and treating "unknown" as "wrong"
+        would refuse every existing index once.
+        """
+
+        try:
+            points, _ = self.client.scroll(
+                collection_name=self.collection,
+                limit=1,
+                with_payload=True,
+                with_vectors=False,
+            )
+        except Exception:
+            return None
+
+        if not points:
+            return None
+
+        return (points[0].payload or {}).get("embedding_model")
+
+    def check_embedding_model(self, embedding_model: str | None) -> None:
+        """
+        Refuse to add vectors from a different model than the collection holds.
+
+        [claude] A dimension change already fails loudly: the collection is
+        sized from the model and Qdrant rejects the mismatch. A change to a
+        *same-dimension* model is the silent one — the old and new vectors
+        share a collection while occupying different embedding spaces, so
+        every distance between them is meaningless and search degrades for
+        the older files with no error anywhere.
+
+        Raising here means a model swap surfaces as "this file could not be
+        indexed", which is how ingestion already reports a dead index, and
+        the file is still stored and readable. That is a better failure than
+        a silently worse search — and a much better one than refusing to
+        start, which would take the CRM agent down over a workspace feature
+        that is designed to degrade.
+        """
+
+        if embedding_model is None:
+            return
+
+        stored = self.stored_embedding_model()
+
+        if stored is not None and stored != embedding_model:
+            raise IndexModelMismatch(
+                f"this index was built with {stored!r} but the configured "
+                f"encoder is {embedding_model!r}; vectors from two models "
+                "cannot be compared. Re-index the workspace, or restore the "
+                "previous encoder."
+            )
+
     # ---------------------------------------------------------
     # Writing
     # ---------------------------------------------------------
 
-    def upsert(self, chunks: list[Chunk], vectors: list[list[float]]) -> int:
-        """Index chunks with their vectors. Returns the number written."""
+    def upsert(
+        self,
+        chunks: list[Chunk],
+        vectors: list[list[float]],
+        embedding_model: str | None = None,
+    ) -> int:
+        """
+        Index chunks with their vectors. Returns the number written.
+
+        [claude] `embedding_model` is stamped on every point.
+
+        A model swap that changes the dimension already fails loudly —
+        `ensure_collection` sizes the collection from it and Qdrant rejects
+        the mismatch. A swap to a *same-dimension* model does not: the old
+        and new vectors coexist in one collection occupying different
+        embedding spaces, every distance between them is meaningless, and
+        search quietly degrades for the older files with no error anywhere.
+
+        Recording it per point is what makes that detectable after the
+        fact, and lets a re-index target only the stale vectors.
+        """
 
         qmodels = _qmodels()
 
@@ -148,6 +229,7 @@ class VectorIndex:
                 vector=vector,
                 payload={
                     "chunk_id": chunk.chunk_id,
+                    "embedding_model": embedding_model,
                     "workspace_id": chunk.workspace_id,
                     "text": chunk.text,
                     "file_id": chunk.locator.file_id,

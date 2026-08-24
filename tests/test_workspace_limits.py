@@ -368,3 +368,96 @@ def test_the_dropped_count_is_reported_not_swallowed(service, tmp_path):
 
     assert hits == []
     assert below > 0, "passages were dropped but the count did not say so"
+
+
+# ============================================================
+# Identifiers take the exact path, not the vector one
+# ============================================================
+
+
+def test_identifier_shapes_are_recognised_and_prose_is_not():
+    """
+    [claude] The matcher is narrow on purpose. A false positive costs a
+    full scan of every uploaded sheet for a token that was never an id —
+    and "deals in 2026" scanning for 2026 would return every row carrying
+    that year, which is worse than the search it displaced.
+    """
+
+    from app.tools.workspace import identifier_tokens
+
+    assert identifier_tokens("what about unit A-1204?") == ["A-1204"]
+    assert identifier_tokens("look up DEAL1042") == ["DEAL1042"]
+    assert identifier_tokens("row 1204-88 please") == ["1204-88"]
+    assert identifier_tokens("check #4471") == ["4471"]
+    assert identifier_tokens("find 100004471") == ["100004471"]
+
+    # Prose, years and small numbers are not identifiers.
+    assert identifier_tokens("how many deals are contracted") == []
+    assert identifier_tokens("how many deals in 2026") == []
+    assert identifier_tokens("the top 5 projects") == []
+    assert identifier_tokens("") == []
+
+
+def test_at_most_three_identifiers_are_scanned():
+    """Each one is a scan of every sheet; a question may not trigger many."""
+
+    from app.tools.workspace import identifier_tokens
+
+    question = "compare A-1 A-1204 B-2048 C-3072 D-4096 E-5120"
+
+    assert len(identifier_tokens(question)) <= 3
+
+
+def test_an_exact_identifier_match_beats_similarity(service, tmp_path):
+    """
+    [claude] The case R3 is about.
+
+    `A-1204` and `A-1240` are near-neighbours to a paraphrase encoder, and
+    neither reliably outranks a row that is merely *about* units. The exact
+    path returns the row that actually contains the value.
+    """
+
+    csv = tmp_path / "units.csv"
+    csv.write_text(
+        "unit,client,status\n"
+        "A-1204,Ibrahim,contracted\n"
+        "A-1240,Farouk,reserved\n"
+        "A-1024,Nadia,cancelled\n"
+    )
+    service.ingest_path("ws", csv)
+
+    found = service.find_identifier("ws", "A-1204")
+
+    assert len(found) == 1
+    assert found[0]["row"]["client"] == "Ibrahim"
+    assert "row 1" in found[0]["source"]
+
+    # The near-neighbours are not returned; only the exact value is.
+    assert service.find_identifier("ws", "A-1240")[0]["row"]["client"] == "Farouk"
+    assert service.find_identifier("ws", "A-9999") == []
+
+
+def test_identifier_lookup_is_case_and_space_insensitive(service, tmp_path):
+    """
+    Someone pasting an id out of an email will not match stored casing, and
+    an exact-match tool that is exact about the wrong things is worse than
+    none.
+    """
+
+    csv = tmp_path / "units.csv"
+    csv.write_text("unit,client\nA-1204,Ibrahim\n")
+    service.ingest_path("ws", csv)
+
+    assert service.find_identifier("ws", "a-1204")
+    assert service.find_identifier("ws", "  A-1204  ")
+
+
+def test_identifier_lookup_does_not_cross_workspaces(service, tmp_path):
+    """The tenancy boundary holds on the exact path too, not just the vector one."""
+
+    csv = tmp_path / "units.csv"
+    csv.write_text("unit,client\nA-1204,Ibrahim\n")
+    service.ingest_path("owner", csv)
+
+    assert service.find_identifier("owner", "A-1204")
+    assert service.find_identifier("attacker", "A-1204") == []

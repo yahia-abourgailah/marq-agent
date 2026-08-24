@@ -282,6 +282,56 @@ class Settings(BaseSettings):
     # against it rather than guessed at again.
     max_context_tokens: int = 12_000
 
+    # [claude] How many model calls this process may have in flight at once.
+    #
+    # One turn is not one call. It is the routing call, then up to two
+    # specialists in parallel, each of which may run a nested SQL-agent
+    # call, then synthesis — up to five, and nothing anywhere bounded them.
+    # Against a vLLM server running `--max-num-seqs 32`, a handful of
+    # simultaneous users saturates the endpoint and everybody queues behind
+    # everybody else, which shows up as every request being slow rather
+    # than as a capacity problem.
+    #
+    # A ceiling does not make the endpoint faster. It makes the queue
+    # explicit and keeps it on this side of the network, where a request
+    # waiting for a slot is visible as a slot wait rather than as an
+    # unexplained latency spike.
+    #
+    # 8 is deliberately below the endpoint's own concurrency: several
+    # services share that box, and a client that assumes it owns all of a
+    # shared resource is how one tenant starves the rest. Raise it from
+    # what vLLM logs at startup, not from this comment.
+    max_concurrent_model_calls: int = 8
+
+    # Requests per minute per authenticated subject. A browser tab in a
+    # retry loop is otherwise unbounded spend against a paid endpoint.
+    rate_limit_per_minute: int = 30
+
+    # [claude] The longest a single conversation may run, in turns.
+    #
+    # Trimming keeps a long thread *working* — it no longer overflows the
+    # context window — but it does so by dropping the oldest exchanges,
+    # silently. Past some length a thread is not a conversation any more,
+    # it is a thread whose beginning the agent can no longer see while the
+    # user still remembers writing it, and the honest thing is to say so
+    # and start a fresh one.
+    #
+    # Surfaced as a clear message rather than a generic failure, which is
+    # the specific complaint the review made: the old overflow arrived as a
+    # provider error caught as "specialist failed", so the user learned
+    # nothing and the thread stayed broken.
+    max_turns_per_thread: int = 100
+
+    # How long a conversation is kept after its last turn.
+    #
+    # This is a retention decision, not a capacity one. Checkpoints hold
+    # the transcript and `conversation_turns` holds the SQL behind every
+    # answer — both derived from CRM data, and nothing expired either of
+    # them. Sweeping is exposed as a repository method and a script rather
+    # than run automatically, because deleting customer-derived data on a
+    # timer is a policy someone should choose deliberately.
+    conversation_retention_days: int = 90
+
     # ----------------------------------------------------------
     # Uploads
     # ----------------------------------------------------------
