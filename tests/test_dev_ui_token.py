@@ -156,3 +156,74 @@ def test_the_page_asks_for_the_config_before_its_behaviour(issuer):
     ).read_text()
 
     assert page.index("/app-config.js") < page.index("/app.js")
+
+
+# ============================================================
+# Which token wins
+# ============================================================
+#
+# [claude] These read the shipped script rather than executing it, because
+# there is no JS test runner here and adding one for four assertions is a
+# worse trade than checking the contract is present. The behaviour itself
+# was verified in a browser: a stale token planted in localStorage was
+# replaced by the configured one on reload, a pasted override survived a
+# reload, and clearing the field handed control back to the environment.
+
+
+def ui_script() -> str:
+    from pathlib import Path
+
+    from app.api import app as module
+
+    return (Path(module.__file__).parent / "static" / "app.js").read_text()
+
+
+def test_the_configured_token_wins_over_a_stored_one():
+    """
+    The first version had a stored token win, so a browser used before this
+    existed kept its old short-lived token and silently ignored the
+    configured one — the precise problem the setting was added to remove.
+    """
+
+    script = ui_script()
+
+    assert "function adoptToken()" in script
+    assert "served && !manualOverride()" in script
+
+
+def test_an_explicit_override_is_recorded_separately():
+    """
+    A pasted identity still survives a reload, but only because it is
+    marked as deliberate — not because whatever happens to be in storage
+    outranks configuration.
+    """
+
+    script = ui_script()
+
+    assert 'MANUAL_KEY = "marq_token_manual"' in script
+    assert "localStorage.setItem(MANUAL_KEY" in script
+
+
+def test_clearing_the_field_returns_control_to_the_environment():
+    """
+    Otherwise clearing it leaves the console signed out beside a perfectly
+    good configured token, which is a dead end with no way back except
+    knowing to paste again.
+    """
+
+    script = ui_script()
+
+    assert "localStorage.removeItem(MANUAL_KEY)" in script
+
+
+def test_the_panel_names_where_the_identity_came_from():
+    """
+    "Where is this identity coming from" is the first question when the
+    console is signed in as somebody unexpected, and with DEV_UI_TOKEN
+    there are now two possible answers.
+    """
+
+    script = ui_script()
+
+    assert "tokenFromEnvironment" in script
+    assert "DEV_UI_TOKEN" in script

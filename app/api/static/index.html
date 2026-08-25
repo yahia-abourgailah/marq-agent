@@ -82,7 +82,11 @@
     <div class="token-edit" id="tokenEdit">
       <input id="token" type="password" placeholder="Paste a bearer token"
              autocomplete="off" aria-label="Access token">
-      <code class="mono">python scripts/dev_token.py mint</code>
+      <!-- [claude] Which of these two shows depends on where the token came
+           from. Configured in the environment, there is nothing to do here
+           and a password field saying "paste a bearer token" reads as a
+           chore that is still outstanding. -->
+      <code class="mono" id="tokenHelp">python scripts/dev_token.py mint</code>
     </div>
     <div class="tagline">Live Inspired</div>
   </div>

@@ -281,7 +281,8 @@ aside {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .whoami .hint { font-size: 9px; letter-spacing: .1em; text-transform: uppercase;
-                color: rgba(245,243,239,.52); }
+                color: rgba(245,243,239,.52);
+                overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .who-btn .chev { color: rgba(245,243,239,.28); font-size: 9px; transition: transform .2s ease; }
 .who-btn.open .chev { transform: rotate(90deg); }
 

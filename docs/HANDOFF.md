@@ -1485,9 +1485,27 @@ file would hand a working bearer token to anyone who could load the page, and
 nothing about the deployment would look wrong. Same shape as `auth_dev_mode`,
 guarded the same way.
 
-A token already in `localStorage` wins over the served one: somebody who
-pasted a specific identity to test something is not expecting a reload to
-sign them back in as someone else.
+**The configured token wins**, and the first version had this backwards.
+
+I made a stored token win, reasoning that somebody who pasted a specific
+identity should not be signed back in as someone else by a reload. That was
+the wrong default and it failed immediately in the only way that mattered: a
+browser used before the feature existed kept a two-day token from an earlier
+session and silently ignored the thirty-day one from the environment — which
+is exactly the problem the setting was added to remove. The reporter's
+console still read `VALID TO AUG 26` while the environment held a token
+valid to September.
+
+An explicit override still survives a reload, and it is now explicit rather
+than incidental: editing the field records that this browser has been told
+to use a particular token, and only then does storage outrank configuration.
+Clearing the field revokes that and hands control back — otherwise clearing
+it is a dead end, signed out beside a perfectly good configured token with
+no way back except knowing to paste again.
+
+The identity panel names the source (`Valid to Sep 24 · env`), because
+"where is this identity coming from" is the first question when the console
+is signed in as somebody unexpected, and there are now two possible answers.
 
 It is a literal token, so it expires — 24 hours by default. `mint --expires
 2592000` gives thirty days; when it lapses the console falls back to the

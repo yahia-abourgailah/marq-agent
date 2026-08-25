@@ -278,24 +278,76 @@ function trapTab(e, container) {
 }
 
 /* ---------------- token ---------------- */
-/* [claude] A token from the server, when the deployment offers one.
- *
- * `DEV_UI_TOKEN` in the environment file is served by `/app-config.js`,
- * which exists only outside production — so on a production host this is
- * `undefined` and the console behaves exactly as it did before.
- *
- * A token already saved here wins. Someone who pasted a specific identity
- * to test something is not expecting a page reload to sign them back in as
- * somebody else.
- */
-$("token").value =
-  localStorage.getItem("marq_token") || window.MARQ_DEV_TOKEN || "";
+/* ==================================================================
+   Where the token comes from
 
-if (!localStorage.getItem("marq_token") && window.MARQ_DEV_TOKEN) {
-  localStorage.setItem("marq_token", window.MARQ_DEV_TOKEN);
+   [claude] `DEV_UI_TOKEN` in the environment file is served by
+   `/app-config.js`, which exists only outside production — so on a
+   production host `window.MARQ_DEV_TOKEN` is undefined and everything
+   below falls back to the field, exactly as it always did.
+
+   **The served token wins.** The first version had a stored token win, on
+   the reasoning that somebody who pasted a specific identity should not be
+   signed back in as someone else by a reload. That was the wrong default
+   and it showed up immediately: a browser that had been used before the
+   feature existed kept a two-day token from a previous session and
+   silently ignored the thirty-day one from the environment — which is the
+   precise problem the setting was added to remove.
+
+   An explicit override still survives, and it is explicit: editing the
+   field records that this browser has been told to use a particular
+   token, and only then does the stored value win. Clearing the field
+   revokes that and hands control back to the environment.
+   ================================================================== */
+const MANUAL_KEY = "marq_token_manual";
+
+const servedToken = () =>
+  typeof window.MARQ_DEV_TOKEN === "string" && window.MARQ_DEV_TOKEN.trim()
+    ? window.MARQ_DEV_TOKEN.trim()
+    : "";
+
+const manualOverride = () => localStorage.getItem(MANUAL_KEY) === "1";
+
+/* True when this session's identity came from the environment rather than
+   from something a person typed. The identity panel says so. */
+let tokenFromEnvironment = false;
+
+function adoptToken() {
+  const served = servedToken();
+  const stored = (localStorage.getItem("marq_token") || "").trim();
+
+  if (served && !manualOverride()) {
+    tokenFromEnvironment = true;
+
+    if (stored !== served) localStorage.setItem("marq_token", served);
+
+    return served;
+  }
+
+  return stored;
 }
+
+$("token").value = adoptToken();
+
 $("token").addEventListener("change", () => {
-  localStorage.setItem("marq_token", $("token").value.trim());
+  const typed = $("token").value.trim();
+
+  if (!typed) {
+    // Cleared. Give the environment its say back rather than leaving the
+    // console signed out beside a perfectly good configured token.
+    localStorage.removeItem(MANUAL_KEY);
+    localStorage.removeItem("marq_token");
+    $("token").value = adoptToken();
+  } else if (typed === servedToken()) {
+    localStorage.removeItem(MANUAL_KEY);
+    localStorage.setItem("marq_token", typed);
+    tokenFromEnvironment = true;
+  } else {
+    localStorage.setItem(MANUAL_KEY, "1");
+    localStorage.setItem("marq_token", typed);
+    tokenFromEnvironment = false;
+  }
+
   renderIdentity();
   refreshAll();
   if ($("token").value.trim()) toggleToken(false);
@@ -349,10 +401,31 @@ function renderIdentity() {
 
   $("avatar").textContent = subject.trim()[0] || "?";
   $("whoName").textContent = subject;
-  $("whoHint").textContent = expired
+
+  const validity = expired
     ? "Token expired"
-    : (exp ? "Valid to " + exp.toLocaleDateString(undefined,
-        { day: "numeric", month: "short" }) : "Signed in");
+    : (exp
+        ? "Valid to " + exp.toLocaleDateString(undefined,
+            { day: "numeric", month: "short" })
+        : "Signed in");
+
+  // [claude] Naming the source is the point of this line, not decoration.
+  // "Where is this identity coming from" is the first question when the
+  // console is signed in as somebody unexpected — and with DEV_UI_TOKEN
+  // there are now two possible answers.
+  // Short enough not to wrap in a 300px sidebar at this letter-spacing.
+  // The drawer below carries the full sentence.
+  $("whoHint").textContent = tokenFromEnvironment
+    ? `${validity} · env`
+    : validity;
+
+  const help = $("tokenHelp");
+
+  if (help) {
+    help.textContent = tokenFromEnvironment
+      ? "DEV_UI_TOKEN — clear this field to change it"
+      : "python scripts/dev_token.py mint";
+  }
 }
 const hasToken = () => !!$("token").value.trim();
 
