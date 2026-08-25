@@ -279,6 +279,25 @@ class Settings(BaseSettings):
     # confuse whoever is debugging at 2am.
     serve_ui: bool = True
 
+    # [claude] A token the local console picks up on its own, so a
+    # developer opening `/` does not have to mint and paste one.
+    #
+    # Development only, and enforced rather than documented: `create_app`
+    # raises when this is set with `APP_ENV=production`, and the route that
+    # serves it is not registered there at all. Two gates, because this is
+    # a bearer token being handed to anyone who can load the page, and
+    # "we'll remember not to set it in prod" is not a control.
+    #
+    # It is a literal token rather than a subject to mint for, which means
+    # it expires — `dev_token.py mint` defaults to 24 hours. Mint a longer
+    # one for a machine you use daily:
+    #
+    #     python scripts/dev_token.py mint --expires 2592000   # 30 days
+    #
+    # When it expires the console falls back to the manual field, which is
+    # the same place it started.
+    dev_ui_token: SecretStr | None = None
+
     # ----------------------------------------------------------
     # Answer provenance
     # ----------------------------------------------------------

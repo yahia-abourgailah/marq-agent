@@ -278,7 +278,22 @@ function trapTab(e, container) {
 }
 
 /* ---------------- token ---------------- */
-$("token").value = localStorage.getItem("marq_token") || "";
+/* [claude] A token from the server, when the deployment offers one.
+ *
+ * `DEV_UI_TOKEN` in the environment file is served by `/app-config.js`,
+ * which exists only outside production — so on a production host this is
+ * `undefined` and the console behaves exactly as it did before.
+ *
+ * A token already saved here wins. Someone who pasted a specific identity
+ * to test something is not expecting a page reload to sign them back in as
+ * somebody else.
+ */
+$("token").value =
+  localStorage.getItem("marq_token") || window.MARQ_DEV_TOKEN || "";
+
+if (!localStorage.getItem("marq_token") && window.MARQ_DEV_TOKEN) {
+  localStorage.setItem("marq_token", window.MARQ_DEV_TOKEN);
+}
 $("token").addEventListener("change", () => {
   localStorage.setItem("marq_token", $("token").value.trim());
   renderIdentity();
@@ -1241,30 +1256,177 @@ document.addEventListener("visibilitychange", () => {
 function mdEscape(t) {
   return t.replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
 }
+/* [claude] Inline spans. Escaped first, always — the text is CRM data and,
+   in a reconciliation, content out of a file a third party wrote. */
+const mdInline = (l) =>
+  l.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+   .replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s.,;:)]|$)/g, "$1<em>$2</em>")
+   .replace(/`([^`]+)`/g, "<code>$1</code>");
+
+/* A row of a pipe table, minus the outer pipes. */
+const tableCells = (line) =>
+  line.trim().replace(/^\||\|$/g, "").split("|").map(c => c.trim());
+
+/* The `| :--- | ---: |` line under a header row. Also carries alignment. */
+const ALIGN_ROW = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/;
+
+function alignmentsFrom(line) {
+  return tableCells(line).map(spec => {
+    const left = spec.startsWith(":");
+    const right = spec.endsWith(":");
+
+    if (left && right) return "center";
+    if (right) return "right";
+    return left ? "left" : "";
+  });
+}
+
+/* [claude] A column of numbers is right-aligned and tabular whatever the
+   markdown said.
+ *
+ * Agents emit `| :--- |` for every column out of habit, so honouring the
+ * spec alone left figures ragged-left in proportional digits — which is
+ * the single thing that makes a table of numbers look unconsidered. A
+ * column is treated as numeric when every populated cell in it is one. */
+const NUMERIC = /^[-+]?[\d,]+(\.\d+)?\s*%?$|^[-+]?\d+(\.\d+)?\s*(sqm|m²|EGP|USD)?$/i;
+
+function numericColumns(rows) {
+  const width = Math.max(...rows.map(r => r.length));
+
+  return Array.from({ length: width }, (_, i) => {
+    // [claude] The first column is the row's label, never a quantity —
+    // even when it is made of digits.
+    //
+    // "Franchise" holds 9, 5 and 12, which are identifiers rather than
+    // amounts. Right-aligning them puts the thing you scan down the
+    // column for against the wrong edge, away from the header it belongs
+    // under, and lines it up with figures it should not be compared to.
+    // A table's stub column is left-aligned; that convention exists
+    // because it is what makes the rows readable.
+    if (i === 0) return false;
+
+    const cells = rows.map(r => (r[i] || "").trim()).filter(Boolean);
+
+    return cells.length > 0 && cells.every(c => NUMERIC.test(c));
+  });
+}
+
+function renderTable(header, alignments, body) {
+  const numeric = numericColumns(body);
+
+  const align = (i) =>
+    alignments[i] && alignments[i] !== "left"
+      ? alignments[i]
+      : (numeric[i] ? "right" : "left");
+
+  const cell = (tag, text, i) =>
+    `<${tag} class="${numeric[i] ? "n" : ""}" style="text-align:${align(i)}">`
+    + mdInline(text) + `</${tag}>`;
+
+  const head = "<tr>" + header.map((c, i) => cell("th", c, i)).join("") + "</tr>";
+  const rows = body
+    .map(r => "<tr>" + r.map((c, i) => cell("td", c, i)).join("") + "</tr>")
+    .join("");
+
+  // Its own scroll box: a wide table must not make the page scroll
+  // sideways, which breaks every other column on the screen to show one.
+  return `<div class="scroll-x"><table class="md">${head}${rows}</table></div>`;
+}
+
+/*
+ * The agent writes light markdown. Rendering it here rather than showing
+ * raw asterisks — and deliberately tiny and escape-first, because the text
+ * contains CRM data and, in a reconciliation, content out of a file
+ * somebody uploaded. Nothing is ever trusted as HTML.
+ *
+ * [claude] Tables were the gap worth closing. Asked to compare franchises
+ * the agent replies with a real markdown table, and the previous renderer
+ * matched neither its bullet nor its heading pattern — so every row became
+ * a paragraph of raw pipe characters. That is the most visible thing in an
+ * answer and it read as broken.
+ *
+ * Also handled now: ordered lists, and a bold line on its own, which is
+ * what the agent writes where it means a subheading.
+ */
 function renderMarkdown(text) {
   const lines = mdEscape(text).split("\n");
-  let html = "", inList = false;
+  const out = [];
 
-  const inline = (l) =>
-    l.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-     .replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s.,;:)]|$)/g, "$1<em>$2</em>")
-     .replace(/`([^`]+)`/g, "<code>$1</code>");
+  let list = null;   // "ul" | "ol" | null
 
-  for (let raw of lines) {
-    const bullet = raw.match(/^\s*[-*•]\s+(.*)$/);
-    if (bullet) {
-      if (!inList) { html += "<ul>"; inList = true; }
-      html += "<li>" + inline(bullet[1]) + "</li>";
+  const closeList = () => {
+    if (list) { out.push(`</${list}>`); list = null; }
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i];
+
+    // ---- table: a header row followed by an alignment row ----
+    if (
+      raw.includes("|") &&
+      i + 1 < lines.length &&
+      ALIGN_ROW.test(lines[i + 1]) &&
+      lines[i + 1].includes("-")
+    ) {
+      closeList();
+
+      const header = tableCells(raw);
+      const alignments = alignmentsFrom(lines[i + 1]);
+      const body = [];
+
+      let j = i + 2;
+
+      while (j < lines.length && lines[j].includes("|") && lines[j].trim()) {
+        body.push(tableCells(lines[j]));
+        j++;
+      }
+
+      out.push(renderTable(header, alignments, body));
+      i = j - 1;
       continue;
     }
-    if (inList) { html += "</ul>"; inList = false; }
-    if (!raw.trim()) { html += "<br>"; continue; }
-    const h = raw.match(/^#{1,4}\s+(.*)$/);
-    html += h ? "<h4>" + inline(h[1]) + "</h4>"
-              : "<p>" + inline(raw) + "</p>";
+
+    // ---- lists ----
+    const bullet = raw.match(/^\s*[-*•]\s+(.*)$/);
+
+    if (bullet) {
+      if (list !== "ul") { closeList(); out.push("<ul>"); list = "ul"; }
+      out.push("<li>" + mdInline(bullet[1]) + "</li>");
+      continue;
+    }
+
+    const numbered = raw.match(/^\s*\d+[.)]\s+(.*)$/);
+
+    if (numbered) {
+      if (list !== "ol") { closeList(); out.push("<ol>"); list = "ol"; }
+      out.push("<li>" + mdInline(numbered[1]) + "</li>");
+      continue;
+    }
+
+    closeList();
+
+    if (!raw.trim()) continue;
+
+    // ---- headings ----
+    const hash = raw.match(/^#{1,6}\s+(.*)$/);
+
+    if (hash) { out.push("<h4>" + mdInline(hash[1]) + "</h4>"); continue; }
+
+    // A line that is entirely bold is a subheading, not a paragraph that
+    // happens to shout. This is what the agent writes above a breakdown.
+    const boldOnly = raw.trim().match(/^\*\*([^*]+)\*\*:?$/);
+
+    if (boldOnly) {
+      out.push("<h4>" + mdInline(boldOnly[1]) + "</h4>");
+      continue;
+    }
+
+    out.push("<p>" + mdInline(raw) + "</p>");
   }
-  if (inList) html += "</ul>";
-  return html;
+
+  closeList();
+
+  return out.join("");
 }
 
 /* Highlight SQL keywords — gold, matching the brand's accent role. */

@@ -157,6 +157,10 @@
 <!-- Motion 13.1.1 (formerly Framer Motion), MIT, served from this host
      rather than a CDN — see static/vendor/README.md for why. -->
 <script src="/vendor/motion.min.js"></script>
+<!-- [claude] Runtime configuration, served only outside production. In
+     production this 404s and `window.MARQ_DEV_TOKEN` stays undefined,
+     which is the same as not being configured. -->
+<script src="/app-config.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

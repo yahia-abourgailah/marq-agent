@@ -412,7 +412,12 @@ textarea:focus {
 }
 .msg.agent .bubble p { margin: 0 0 10px; }
 .msg.agent .bubble p:last-child { margin-bottom: 0; }
-.msg.agent .bubble strong { font-weight: 600; color: var(--black); }
+/* [claude] Tabular figures inside emphasis. The agent bolds the number in
+   "**contracted**: 225", and a column of those in a bullet list only reads
+   as a column when the digits are the same width. */
+.msg.agent .bubble strong {
+  font-weight: 600; color: var(--black); font-variant-numeric: tabular-nums;
+}
 .msg.agent .bubble em { font-style: italic; color: var(--charcoal); }
 .msg.agent .bubble code {
   font-family: var(--mono); font-size: 12.5px; background: var(--gold-faint);
@@ -422,6 +427,67 @@ textarea:focus {
   font-family: var(--display); font-size: 15px; font-weight: 500;
   letter-spacing: .03em; margin: 16px 0 8px; text-wrap: balance;
 }
+/* ==================================================================
+   Tables in an answer
+
+   [claude] The agent replies to "compare franchises" with a real markdown
+   table, and the renderer used to match neither its bullet nor its heading
+   pattern — so every row rendered as a paragraph of raw pipes. That is the
+   most visible thing in an answer and it read as broken software.
+
+   Styled as a data table rather than as prose: figures in tabular numerals
+   so columns of digits line up, a hairline rule per row rather than a
+   grid, and the header in the same small-caps label the rest of the
+   console uses. The gold left border ties it to the answer it belongs to
+   without boxing it.
+   ================================================================== */
+.msg.agent .bubble table.md {
+  width: 100%; border-collapse: collapse; margin: 14px 0 16px;
+  font-size: 13px; line-height: 1.5;
+}
+.msg.agent .bubble table.md th {
+  font-size: 9.5px; letter-spacing: .16em; text-transform: uppercase;
+  font-weight: 500; color: var(--ink-dim); white-space: nowrap;
+  padding: 0 12px 7px; border-bottom: 1px solid var(--rule-strong);
+}
+.msg.agent .bubble table.md td {
+  padding: 8px 12px; border-bottom: 1px solid var(--rule);
+  color: var(--ink);
+}
+.msg.agent .bubble table.md tr:last-child td { border-bottom: none; }
+/* A row is worth following across; the tint is lighter than the gold
+   accent so it reads as guidance rather than as selection. */
+.msg.agent .bubble table.md tr:hover td { background: var(--gold-faint); }
+
+/* Figures line up only if the digits are the same width. */
+.msg.agent .bubble table.md th.n,
+.msg.agent .bubble table.md td.n { font-variant-numeric: tabular-nums; }
+
+/* The first column is the row's subject, so it carries the emphasis. */
+.msg.agent .bubble table.md td:first-child { color: var(--black); font-weight: 500; }
+
+/* A wide table scrolls inside its own box; the page never does. */
+.msg.agent .bubble .scroll-x {
+  overflow-x: auto; -webkit-overflow-scrolling: touch;
+  margin: 0 -2px; padding: 0 2px;
+}
+
+/* ==================================================================
+   Ordered lists
+   ================================================================== */
+.msg.agent .bubble ol {
+  margin: 4px 0 12px; padding-left: 0; list-style: none; counter-reset: md;
+}
+.msg.agent .bubble ol > li {
+  position: relative; padding-left: 26px; margin-bottom: 5px;
+  counter-increment: md;
+}
+.msg.agent .bubble ol > li::before {
+  content: counter(md) "."; position: absolute; left: 2px; top: 0;
+  color: var(--gold-ink); font-size: 11px; font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
 .msg.agent .bubble ul { margin: 4px 0 12px; padding-left: 0; list-style: none; }
 .msg.agent .bubble li { position: relative; padding-left: 20px; margin-bottom: 5px; }
 .msg.agent .bubble li::before {

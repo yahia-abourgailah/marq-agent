@@ -22,19 +22,20 @@ between HTTP and something that already existed and was already tested.
 
 from __future__ import annotations
 
+import json
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from app.api.errors import install_error_handlers, new_request_id
 from app.api.routes import chat, health, threads, workspace
 from app.auth.jwt import TokenVerifier
-from app.config import APP_ENV, settings
+from app.config import APP_ENV, reveal, settings
 from app.db.connection import app_db
 from app.db.repositories.conversations import ConversationRepository
 from app.db.state import build_state_pool
@@ -185,6 +186,21 @@ def create_app() -> FastAPI:
     # [claude] Registered last, and only when enabled, so it can never
     # shadow an API route. Same-origin by construction, which is what
     # keeps it working with `CORS_ORIGINS` empty.
+    # [claude] A configured console token is refused outright in
+    # production, whether or not the UI is served there.
+    #
+    # The route below is only registered outside production, so this is the
+    # second gate rather than the only one. It exists because the failure
+    # it guards against is silent: a `.env.production` that inherited
+    # `DEV_UI_TOKEN` from a copied development file would hand a working
+    # bearer token to anyone who could load the page, and nothing about the
+    # deployment would look wrong.
+    if APP_ENV == "production" and settings.dev_ui_token:
+        raise RuntimeError(
+            "DEV_UI_TOKEN must not be set when APP_ENV=production. It "
+            "serves a bearer token to anyone who can load the console."
+        )
+
     if settings.serve_ui:
         static_dir = Path(__file__).parent / "static"
         index = static_dir / "index.html"
@@ -236,6 +252,35 @@ def create_app() -> FastAPI:
                 return FileResponse(path, headers={"Cache-Control": "no-store"})
 
             return asset
+
+        # [claude] The console's runtime configuration, as a script rather
+        # than as a value baked into index.html.
+        #
+        # index.html is served from disk unchanged, and keeping it that way
+        # matters: a page that is templated at request time is a page whose
+        # served bytes differ from the file on disk, which is exactly the
+        # sort of difference that makes "it works locally" hard to
+        # investigate. This is a separate one-line file instead.
+        #
+        # Registered only outside production. In production the console is
+        # normally off entirely (`SERVE_UI=false`), but if someone turns it
+        # on, the automatic token must not follow.
+        if APP_ENV != "production":
+
+            @api.get("/app-config.js", include_in_schema=False)
+            async def app_config() -> Response:
+                token = reveal(settings.dev_ui_token) or ""
+
+                # JSON-encoded, so a token containing a quote or a
+                # backslash cannot terminate the string and become script.
+                return Response(
+                    content=(
+                        "window.MARQ_DEV_TOKEN = "
+                        f"{json.dumps(token or None)};\n"
+                    ),
+                    media_type="text/javascript",
+                    headers={"Cache-Control": "no-store"},
+                )
 
         for asset_name in ("app.css", "app.js"):
             asset_path = static_dir / asset_name

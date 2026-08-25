@@ -1466,6 +1466,60 @@ asymmetry reads as a decision rather than an omission.
   it needs a database — but it belongs on the pre-deploy checklist rather
   than being assumed covered by a green CI.
 
+## The console signs itself in, and reads like a report — 24 August
+
+Two requests, both about the local console.
+
+### `DEV_UI_TOKEN`
+
+Set it in the environment file and the console picks it up; no minting and
+pasting. Served by `/app-config.js` as a one-line script rather than baked
+into `index.html`, so the page still leaves disk unchanged — a page templated
+at request time is one whose served bytes differ from the file, which is
+exactly the difference that makes "it works locally" hard to investigate.
+
+Gated twice, because the failure is silent. The route is not registered when
+`APP_ENV=production`, **and** `create_app` refuses to start if the variable
+is set there. A `.env.production` that inherited it from a copied development
+file would hand a working bearer token to anyone who could load the page, and
+nothing about the deployment would look wrong. Same shape as `auth_dev_mode`,
+guarded the same way.
+
+A token already in `localStorage` wins over the served one: somebody who
+pasted a specific identity to test something is not expecting a reload to
+sign them back in as someone else.
+
+It is a literal token, so it expires — 24 hours by default. `mint --expires
+2592000` gives thirty days; when it lapses the console falls back to the
+manual field, which is where it started.
+
+### Answers that read like answers
+
+The renderer handled bold, italics, code, bullets and hashes. Asked to
+compare franchises, the agent replies with a **markdown table** — and it
+matched neither the bullet nor the heading pattern, so every row rendered as
+a paragraph of raw pipe characters. That is the most visible thing in an
+answer and it read as broken software.
+
+Tables are real tables now, and three details do the work:
+
+- **Numeric columns are detected and right-aligned in tabular numerals.**
+  Agents emit `| :--- |` for every column out of habit, so honouring the
+  markdown alignment alone left figures ragged-left in proportional digits.
+- **The first column is never auto-right-aligned.** "Franchise" holds 9, 5
+  and 12 — identifiers, not amounts. A table's stub column is left-aligned
+  because that is what makes rows readable, and lining ids up against
+  quantities invites comparing them.
+- **Its own `overflow-x` box**, so a wide table never makes the page scroll
+  sideways.
+
+Also added: ordered lists, and a line that is entirely bold treated as a
+subheading, which is what the agent writes above a breakdown.
+
+Still escape-first. Verified with a table whose cells contain
+`<img src=x onerror=...>` and `<script>`: nothing is injected, the markup
+renders as text, and the markdown inside the same table still works.
+
 ## Open items
 
 ### Next up
