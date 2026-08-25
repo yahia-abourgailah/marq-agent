@@ -1564,6 +1564,75 @@ Still escape-first. Verified with a table whose cells contain
 `<img src=x onerror=...>` and `<script>`: nothing is injected, the markup
 renders as text, and the markdown inside the same table still works.
 
+## Running it in a container — 25 August
+
+`Dockerfile`, `docker-compose.yml`, `docker-compose.dev.yml`,
+`.dockerignore`, `.env.docker.example`. Multi-stage, non-root, CPU-only
+torch, readiness as the HEALTHCHECK.
+
+```bash
+cp .env.docker.example docker.env       # fill in MODEL_*, DEV_UI_TOKEN
+docker compose --env-file docker.env up -d --build
+open http://localhost:8000
+```
+
+**It binds 8000, the same port as `python main.py`. Run one or the other.**
+An earlier version used 8080 so both could run, and what that produced was
+two servers, two databases and two sets of conversations with nothing on
+screen saying which you were looking at. For live reload while editing, add
+`-f docker-compose.dev.yml`, which mounts the working tree over the image's
+copy. It is not named `override.yml` on purpose: auto-loading the mounts
+would mean never being able to test the built image.
+
+**The image is 3.2 GB**, ~1.6 GB of it the local encoder plus ~470 MB of
+weights. That is the price of embedding uploads in-process rather than
+posting them to an API — a privacy decision, not an oversight.
+`--build-arg PRELOAD_EMBEDDER=false` gives 2.3 GB and downloads on first
+upload.
+
+### Five things only running it revealed
+
+- **The stack came up healthy and every `/v1/threads` was a 500.** The
+  compose comment claimed the app created its conversation tables on boot.
+  It does not: the checkpointer creates the four `checkpoint_*` tables it
+  owns, and `conversations` / `conversation_turns` come from 003 and 004.
+  There is a `migrate` service now, applying **only those two** — 001 and
+  002 are decisions about a real CRM.
+- **Host port 5432 answered from two databases.** The local Postgres and
+  the container both bound it, so `psql -p 5432` reached the local fixture
+  while appearing to reach the container's. Host ports are offset now
+  (5433, 6334, 6380).
+- **The containerised console could not sign in at all.** `/app-config.js`
+  returned null and everything 401'd. `AUTH_DEV_MODE` does not help — it
+  accepts an `X-Debug-Subject` header, which curl can send and a browser
+  page cannot. The container mounts `var/dev-jwt/` read-only and verifies a
+  real signed token.
+- **The preloaded image spent ~40 s on HuggingFace retries per first
+  embed**, before falling back to weights already on disk. `HF_HUB_OFFLINE`
+  now tracks the build arg: 4.8 s, verified with `--network none`.
+- **Two workers raced to create the checkpoint tables.** See below — the
+  only one of the five that was a bug in the application rather than in the
+  container setup.
+
+### The checkpoint race — not a container problem
+
+`AsyncPostgresSaver.setup()` issues `CREATE TABLE IF NOT EXISTS`, and that
+is **not atomic** in PostgreSQL. Two sessions can both pass the existence
+check and both attempt creation; the loser fails with a unique violation on
+`pg_type_typname_nsp_index`. With two uvicorn workers against an empty
+database, both reach `setup()` in the same instant.
+
+It presented as a crash loop that healed itself: one worker raised, uvicorn
+stopped the parent, and the restart succeeded because the tables existed by
+then. That is the kind of failure that gets written off as noise.
+
+`_setup_once` retries a bounded number of times and treats "somebody else
+created it" as success. **The fix is in the application, not the compose
+file**, because any deployment starting replicas in parallel against a fresh
+database has this and Kubernetes does it by default.
+`tests/test_checkpoint_race.py` races four callers at an empty database;
+checked both ways, it reproduces the violation with the fix reverted.
+
 ## Open items
 
 ### Next up
