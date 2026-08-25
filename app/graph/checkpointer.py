@@ -24,6 +24,8 @@ infrastructure one.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from dataclasses import dataclass
 
 from langgraph.checkpoint.memory import InMemorySaver
@@ -31,6 +33,8 @@ from psycopg_pool import AsyncConnectionPool
 
 from app.config import Settings, settings
 from app.db.state import build_state_pool
+
+logger = logging.getLogger("marq.graph")
 
 
 def build_checkpointer() -> InMemorySaver:
@@ -117,7 +121,7 @@ async def open_checkpointer(
         await pool.open()
 
     saver = AsyncPostgresSaver(pool)
-    await saver.setup()
+    await _setup_once(saver)
 
     return CheckpointerHandle(
         saver=saver,
@@ -127,6 +131,62 @@ async def open_checkpointer(
         # closing a borrowed pool would take the repository down with it.
         owns_pool=not borrowed,
     )
+
+
+async def _setup_once(saver, attempts: int = 5) -> None:
+    """
+    Create the checkpoint tables, tolerating another process doing it too.
+
+    [claude] `setup()` is idempotent in the sense that matters — it will not
+    corrupt anything — and it is **not** safe to run concurrently against a
+    database that does not yet have the tables.
+
+    It issues `CREATE TABLE IF NOT EXISTS`, and that is not atomic in
+    PostgreSQL: two sessions can both pass the existence check and both try
+    to create, and the loser fails with a unique violation on
+    `pg_type_typname_nsp_index` rather than a friendly "already exists".
+
+    Which is exactly what happens on first boot with more than one worker.
+    Observed in a container with `--workers 2` against an empty volume: both
+    workers reached `setup()` in the same instant, one raised, uvicorn saw a
+    child fail to start and took the parent down with it. The restart
+    succeeded — the tables existed by then — so the symptom is a crash loop
+    that heals itself, which is the kind that gets written off as noise.
+
+    This is not a container problem. Any deployment that starts replicas in
+    parallel against a fresh database has it, and Kubernetes does that by
+    default.
+
+    So: retry a small number of times, and treat "somebody else created it"
+    as success rather than as an error. The loop is bounded because a
+    genuine permissions failure raises the same class of error, and retrying
+    that forever would turn a clear failure into a hang.
+    """
+
+    from psycopg import errors
+
+    racy = (
+        errors.UniqueViolation,
+        errors.DuplicateTable,
+        errors.DuplicateObject,
+    )
+
+    for attempt in range(1, attempts + 1):
+        try:
+            await saver.setup()
+            return
+        except racy:
+            if attempt == attempts:
+                raise
+
+            logger.info(
+                "checkpoint_setup_raced",
+                extra={"attempt": attempt, "attempts": attempts},
+            )
+
+            # Short, and increasing. The winner needs only to commit; this
+            # is waiting for a transaction, not for a service to come up.
+            await asyncio.sleep(0.2 * attempt)
 
 
 __all__ = [
