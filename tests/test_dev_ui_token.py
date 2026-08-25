@@ -227,3 +227,35 @@ def test_the_panel_names_where_the_identity_came_from():
 
     assert "tokenFromEnvironment" in script
     assert "DEV_UI_TOKEN" in script
+
+
+def test_the_identity_block_is_read_only_when_the_environment_manages_it():
+    """
+    [claude] A password field labelled "paste a bearer token" is a task,
+    and a task already done reads as one still outstanding. It also invites
+    a user of an internal tool to think credentials are their problem,
+    which is the opposite of what configuring DEV_UI_TOKEN achieved.
+
+    Verified in a browser: with a configured token the row has no chevron,
+    no pointer cursor, is not in the tab order, and clicking it does
+    nothing; without one, all four come back.
+    """
+
+    script = ui_script()
+
+    assert "function applyIdentityAffordance()" in script
+    assert 'btn.classList.toggle("managed", managed)' in script
+    # Refused at the click, not only hidden in CSS.
+    assert "if (tokenFromEnvironment) return;" in script
+
+
+def test_hiding_the_control_does_not_remove_the_capability():
+    """
+    A developer testing a second identity still needs a way in. The palette
+    keeps one, which is why the drawer is hidden rather than deleted.
+    """
+
+    script = ui_script()
+
+    assert "access token" in script
+    assert "toggleToken(true)" in script

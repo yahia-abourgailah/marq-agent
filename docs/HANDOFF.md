@@ -1503,9 +1503,35 @@ Clearing the field revokes that and hands control back — otherwise clearing
 it is a dead end, signed out beside a perfectly good configured token with
 no way back except knowing to paste again.
 
-The identity panel names the source (`Valid to Sep 24 · env`), because
-"where is this identity coming from" is the first question when the console
-is signed in as somebody unexpected, and there are now two possible answers.
+When the environment supplies the token, the identity block is **read
+only** — no chevron, no click, no drawer, no password field. A field
+labelled "paste a bearer token" is a task, and a task already done reads as
+one still outstanding; it also invites a user of an internal tool to think
+credentials are their problem, which is the opposite of what configuring
+`DEV_UI_TOKEN` achieved. The control is hidden rather than deleted:
+`⌘K → Change access token` still opens the drawer, because a developer
+testing a second identity needs a way in.
+
+### What this is not
+
+This is a **development convenience**, and it should not be mistaken for how
+the product authenticates. Two things about it are wrong for production and
+deliberately so:
+
+- **The token lives in `localStorage`.** Any XSS on this origin can read it.
+  It is acceptable here because the console is a local tool, `SERVE_UI=false`
+  in production, and the token is a development one for a fixture database.
+- **The identity is a static token in a file.** There is no login, no
+  refresh, no revocation.
+
+The production shape is the one `app/auth/jwt.py` was built for and already
+supports: the company's identity provider authenticates the user, the front
+end obtains a short-lived JWT through OIDC, and this API verifies its
+signature. What should change on the way there is *where the browser keeps
+it* — an `httpOnly; Secure; SameSite=Strict` cookie set by the server, or
+held in memory and refreshed, so that a script on the page cannot read it at
+all. `DEV_UI_TOKEN` should never be set in a deployment that has real users;
+`create_app` refuses it when `APP_ENV=production` for exactly that reason.
 
 It is a literal token, so it expires — 24 hours by default. `mint --expires
 2592000` gives thirty days; when it lapses the console falls back to the

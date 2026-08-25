@@ -268,6 +268,14 @@ aside {
   border-radius: var(--r-sm); text-align: left; transition: background .16s ease;
 }
 .who-btn:hover { background: rgba(245,243,239,.05); }
+
+/* [claude] Managed identity: something to read, not something to operate.
+   The chevron goes, the hover goes, and the cursor stops promising a
+   click that does nothing. The control is still in the DOM — ⌘K reaches
+   the drawer — because hiding an affordance is not removing a capability. */
+.who-btn.managed { cursor: default; }
+.who-btn.managed:hover { background: none; }
+.who-btn.managed .chev { display: none; }
 .avatar {
   width: 28px; height: 28px; flex: none; border-radius: 50%;
   display: grid; place-items: center;

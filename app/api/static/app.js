@@ -360,7 +360,13 @@ function toggleToken(open) {
   btn.classList.toggle("open", next);
   if (next) $("token").focus();
 }
-$("whoBtn").onclick = () => toggleToken();
+$("whoBtn").onclick = () => {
+  // Managed by the environment: nothing here for a reader to do. The
+  // palette still reaches the drawer — see applyIdentityAffordance.
+  if (tokenFromEnvironment) return;
+
+  toggleToken();
+};
 const auth = () => {
   const t = $("token").value.trim();
   return t ? { Authorization: "Bearer " + t } : {};
@@ -413,11 +419,11 @@ function renderIdentity() {
   // "Where is this identity coming from" is the first question when the
   // console is signed in as somebody unexpected — and with DEV_UI_TOKEN
   // there are now two possible answers.
-  // Short enough not to wrap in a 300px sidebar at this letter-spacing.
-  // The drawer below carries the full sentence.
-  $("whoHint").textContent = tokenFromEnvironment
-    ? `${validity} · env`
-    : validity;
+  // [claude] Just the validity. "· env" was developer detail on a line
+  // read by whoever is using the console, and the person who configured
+  // DEV_UI_TOKEN already knows where it came from. The drawer says so for
+  // anyone who opens it.
+  $("whoHint").textContent = validity;
 
   const help = $("tokenHelp");
 
@@ -425,6 +431,43 @@ function renderIdentity() {
     help.textContent = tokenFromEnvironment
       ? "DEV_UI_TOKEN — clear this field to change it"
       : "python scripts/dev_token.py mint";
+  }
+
+  applyIdentityAffordance();
+}
+
+/*
+ * [claude] When the deployment supplies the token, the identity block is
+ * something to read rather than something to operate.
+ *
+ * A password field labelled "paste a bearer token" is a task, and a task
+ * that is already done reads as one still outstanding. Worse, it invites a
+ * user of an internal tool to think credentials are their problem — which
+ * is the opposite of what configuring `DEV_UI_TOKEN` achieved.
+ *
+ * So the row loses its chevron, its click and its drawer. Nothing is
+ * removed from the DOM: `⌘K → Change access token` still opens it, because
+ * a developer testing a second identity needs a way in and hiding a control
+ * is not the same as deleting the capability.
+ */
+function applyIdentityAffordance() {
+  const managed = tokenFromEnvironment;
+  const btn = $("whoBtn");
+
+  if (!btn) return;
+
+  btn.classList.toggle("managed", managed);
+  btn.setAttribute("aria-expanded", "false");
+
+  // A div-shaped button still announces itself as pressable; the role has
+  // to go too, or a screen-reader user is told to activate nothing.
+  if (managed) {
+    btn.setAttribute("tabindex", "-1");
+    btn.setAttribute("aria-disabled", "true");
+    toggleToken(false);
+  } else {
+    btn.removeAttribute("tabindex");
+    btn.removeAttribute("aria-disabled");
   }
 }
 const hasToken = () => !!$("token").value.trim();
