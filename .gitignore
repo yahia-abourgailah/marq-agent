@@ -150,6 +150,12 @@ activemq-data/
 # Environments
 .env
 .envrc
+
+# [claude] The compose variable file. It holds MODEL_API_KEY, and it does
+# NOT match the `.env.*` pattern further down — `docker.env` is the wrong
+# side of the dot. Named explicitly so following the README cannot commit a
+# credential. `.env.docker.example` is the template and is tracked.
+docker.env
 .venv
 env/
 venv/

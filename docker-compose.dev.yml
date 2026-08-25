@@ -1,0 +1,42 @@
+# [claude] Live reload, for editing the code while it runs in the container.
+#
+#     docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+#         --env-file docker.env up -d
+#
+# Why this is a separate file rather than part of the base
+# -------------------------------------------------------
+# It mounts the source over the image's own copy, so what runs is the
+# working tree rather than what was built. That is exactly what you want
+# while iterating and exactly what you do not want when the question is
+# "does the artifact work" — and if this were auto-loaded, the second
+# question could never be asked. `docker-compose.override.yml` would be
+# picked up automatically; this name is not, on purpose.
+#
+# Tests still run on the host against `.venv`. This replaces `python
+# main.py`, not `pytest`.
+
+services:
+  agent:
+    volumes:
+      # The application, live. `:ro` because the container has no business
+      # writing to your working tree — and uvicorn's reloader only reads.
+      - ./app:/app/app:ro
+      - ./main.py:/app/main.py:ro
+      - ./scripts:/app/scripts:ro
+      # Repeated from the base file: a service's `volumes` is replaced
+      # wholesale by an overlay, not merged, so leaving these out would
+      # silently drop the uploads volume and the keys.
+      - workspace:/app/var/workspace
+      - ./var/dev-jwt:/keys:ro
+
+    environment:
+      # One worker. The reloader watches from the parent process, and with
+      # several workers an edit restarts them at slightly different moments
+      # — which reads as the app answering inconsistently for a second.
+      UVICORN_WORKERS: "1"
+
+    # --reload replaces the base command entirely rather than adding to it.
+    command:
+      - sh
+      - -c
+      - exec uvicorn main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/app

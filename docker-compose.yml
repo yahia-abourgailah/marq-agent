@@ -1,0 +1,211 @@
+# [claude] A local stack: the agent plus the three services it talks to.
+#
+# This is for running the thing on one machine — a demo, a review, a
+# developer without a Postgres. It is not a production topology: there is
+# one replica, the database has no backup, and the credentials below are in
+# plain text because they protect nothing.
+#
+#     docker compose --env-file docker.env up -d --build
+#     open http://localhost:8000
+#
+# This binds the same port as `python main.py`. That is deliberate — run one
+# or the other. For live reload while editing, add the dev overlay:
+#
+#     docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+#         --env-file docker.env up -d
+#
+# The CRM tables are not created here. Point POSTGRES_* at a real database,
+# or load the development fixture into this one **from the host** — the
+# image carries the application, not the test tooling, so the generator is
+# not in it:
+#
+#     POSTGRES_PORT=5433 python scripts/generate_fixture.py
+#
+# Host ports are offset by one (5433, 6334, 6380) so this stack cannot be
+# confused with services already running on the machine. See the note on
+# the Postgres port below.
+#
+# The conversation tables *are* created here, by the `migrate` service —
+# see the note on it below for why that is only two of the four migrations.
+
+name: marq-agent
+
+services:
+  agent:
+    build:
+      context: .
+      args:
+        # Bake the encoder in. Set false to build faster and let the model
+        # download on first upload instead — see the Dockerfile.
+        PRELOAD_EMBEDDER: "true"
+    ports:
+      # [claude] 8000, the same port `python main.py` uses — because you
+      # should be running one or the other, not both.
+      #
+      # An earlier version moved this to 8080 so the two could coexist.
+      # They can, and it was the wrong thing to encourage: two servers,
+      # two databases and two sets of conversations, with nothing on
+      # screen saying which one you are looking at. Stop the host process
+      # and use this, or stop this and use the host process.
+      - "8000:8000"
+    environment:
+      # [claude] `development`, not production, and deliberately.
+      #
+      # The console is served and DEV_UI_TOKEN works, which is the point of
+      # a local stack. `APP_ENV=production` would refuse both — see
+      # create_app. A real deployment sets production and supplies JWT_*.
+      APP_ENV: development
+
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: marq
+      POSTGRES_PASSWORD: marq
+      POSTGRES_DB: marq_agent_dev
+
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION: marq_agent_dev
+      WORKSPACE_COLLECTION: marq_workspace
+
+      REDIS_URL: redis://redis:6379/0
+
+      # Point these at a real endpoint. Note that /health/ready reports the
+      # model as ok when it is *configured* — it deliberately does not make
+      # a generation request per poll (see health.py). So a stack with no
+      # model behind this URL still reads ready; the failure shows up on the
+      # first question instead.
+      MODEL_NAME: ${MODEL_NAME:-gemma-4}
+      MODEL_BASE_URL: ${MODEL_BASE_URL:-http://host.docker.internal:8001/v1}
+      MODEL_API_KEY: ${MODEL_API_KEY:-not-a-real-key}
+
+      # [claude] The development keypair, mounted from the host, so the
+      # console in this container is actually usable.
+      #
+      # Without it the stack came up serving a console that could not sign
+      # in: `/app-config.js` returned null, the UI sent no token, and every
+      # request was a 401. `AUTH_DEV_MODE` did not help — it accepts an
+      # `X-Debug-Subject` header, which curl can send and a browser page
+      # cannot.
+      #
+      # So the container verifies a real signed token, the same way
+      # production will. Dev mode stays off.
+      AUTH_DEV_MODE: "false"
+      JWT_PUBLIC_KEY_PATH: /keys/public.pem
+      JWT_ISSUER: ${JWT_ISSUER:-https://dev.marq.local}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-marq-agent}
+
+      # Mint one with:
+      #   python scripts/dev_token.py mint --expires 2592000
+      DEV_UI_TOKEN: ${DEV_UI_TOKEN:-}
+
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      UVICORN_WORKERS: "2"
+    volumes:
+      # Uploads and their parsed content. Without this they vanish with the
+      # container, which is right for a replica and wrong for one machine.
+      - workspace:/app/var/workspace
+      # Read-only: the container verifies tokens, it does not mint them.
+      # Generated on the host by `python scripts/dev_token.py init`.
+      - ./var/dev-jwt:/keys:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      qdrant:
+        condition: service_started
+      redis:
+        condition: service_started
+    restart: unless-stopped
+    # Reaches a model server running on the host rather than in compose.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # [claude] The application's own tables, applied before the agent starts.
+  #
+  # This was missing in the first version of this file, whose comment
+  # claimed the application created them on boot. It does not: the
+  # checkpointer's `setup()` creates the four `checkpoint_*` tables it owns,
+  # and `conversations` / `conversation_turns` come from 003 and 004. The
+  # stack came up looking healthy and every request to /v1/threads returned
+  # 500 with `relation "conversations" does not exist`.
+  #
+  # **Only 003 and 004.** 001 creates the read-only role and 002 applies
+  # row-level security — both are decisions about a real CRM, taken
+  # deliberately and in an order that matters (see migrations/README.md).
+  # Applying 002 automatically would set FORCE on tables this stack does not
+  # even have, and running it against a real database from a compose file is
+  # exactly the accident that README exists to prevent.
+  #
+  # Both are `CREATE TABLE IF NOT EXISTS`, so re-running on every `up` is
+  # correct rather than wasteful.
+  migrate:
+    image: postgres:16-alpine
+    environment:
+      PGPASSWORD: marq
+    volumes:
+      - ./migrations:/migrations:ro
+    # [claude] One psql per line, unwrapped. A folded block kept its
+    # newlines, so the continuation starting `-f` was read as its own
+    # command and the service exited 127 with `sh: -f: not found`.
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        set -e
+        psql -h postgres -U marq -d marq_agent_dev -v ON_ERROR_STOP=1 -f /migrations/003_conversations.sql
+        psql -h postgres -U marq -d marq_agent_dev -v ON_ERROR_STOP=1 -f /migrations/004_conversation_turns.sql
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: marq
+      POSTGRES_PASSWORD: marq
+      POSTGRES_DB: marq_agent_dev
+    ports:
+      # [claude] 5433 on the host, not 5432.
+      #
+      # A developer machine running this project already has a Postgres on
+      # 5432 — this one did, and with both bound, `psql -p 5432` reached the
+      # local database while appearing to reach the container's. Two
+      # databases with the same schema answering on one port is how a
+      # migration gets applied to the wrong one, and nothing about the
+      # command would look wrong.
+      #
+      #     psql -h localhost -p 5433 -U marq -d marq_agent_dev
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # The agent waits for this rather than for the container to start —
+      # Postgres accepts connections a little after the process exists, and
+      # the difference is a boot that fails once and then works on restart.
+      test: ["CMD-SHELL", "pg_isready -U marq -d marq_agent_dev"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      # Offset like Postgres above, for the same reason.
+      - "6334:6333"
+    volumes:
+      - qdrant:/qdrant/storage
+    # [claude] A real server rather than the embedded mode the developer
+    # setup falls back to. Embedded Qdrant ignores payload indexes, so the
+    # workspace filter is correct but scans — see app/workspace/index.py.
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    # Declared because REDIS_URL is required configuration. Nothing imports
+    # redis yet; it is where the rate limiter's shared state goes when one
+    # process stops being enough.
+
+volumes:
+  pgdata:
+  qdrant:
+  workspace:

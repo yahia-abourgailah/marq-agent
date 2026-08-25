@@ -92,6 +92,70 @@ tests/
 .github/workflows/     CI: ruff and the hermetic suite, on every push
 ```
 
+### Running it in Docker
+
+```bash
+cp .env.docker.example docker.env    # fill in MODEL_*, and DEV_UI_TOKEN
+docker compose --env-file docker.env up -d --build
+open http://localhost:8000
+```
+
+**This binds the same port as `python main.py` — run one or the other.**
+That is deliberate. An earlier version put the container on 8080 so both
+could run, and what that produced was two servers, two databases and two
+sets of conversations with nothing on screen saying which you were looking
+at. The port collision is the reminder.
+
+For live reload while editing, add the dev overlay — it mounts the working
+tree over the image's copy, so this replaces `python main.py` rather than
+sitting beside it:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+    --env-file docker.env up -d
+```
+
+Tests still run on the host against `.venv`; the overlay replaces the way
+you *run* the app, not the way you test it.
+
+The container verifies a real signed token, so the console signs itself in
+the same way it does natively. Mint one on the host and put it in
+`docker.env` — the container never mints, it only verifies:
+
+```bash
+python scripts/dev_token.py mint --expires 2592000
+```
+
+`docker-compose.yml` brings up the agent, PostgreSQL, Qdrant and Redis. The
+`migrate` service applies migrations **003 and 004** — the application's own
+conversation tables — before the agent starts. It deliberately does not
+apply 001 or 002: those are decisions about a real CRM, taken by hand, in an
+order that matters. See `migrations/README.md`.
+
+**Host ports are offset by one**: `8080`, `5433`, `6334`, `6380`. A machine
+that develops this project already runs a Postgres on 5432 and probably
+`python main.py` on 8000, and two services answering on one port is how a
+migration lands on the wrong database.
+
+The CRM tables are not created by compose. Point `POSTGRES_*` at a real
+database, or load the development fixture from the host:
+
+```bash
+python scripts/generate_fixture.py
+PGPASSWORD=marq psql -h localhost -p 5433 -U marq -d marq_agent_dev -f tests/fixtures/deals.sql
+```
+
+**The image is 3.2 GB**, and about 1.6 GB of that is the local sentence
+encoder — torch, transformers, scipy, sklearn — with a further ~470 MB for
+the model weights baked in. That is the price of embedding uploaded files
+in-process rather than sending them to an embedding API, which is a privacy
+decision rather than an implementation detail: an uploaded file may hold
+customer data, and an embedding call is a copy of its contents.
+
+Build with `--build-arg PRELOAD_EMBEDDER=false` for a 2.3 GB image that
+downloads the model on first upload instead. The preloaded image sets
+`HF_HUB_OFFLINE`, so it never reaches for the hub it does not need.
+
 ### `.claude/skills/` is tooling, not application code
 
 `ui-ux-pro-max` is a third-party UI/UX design skill (MIT, from

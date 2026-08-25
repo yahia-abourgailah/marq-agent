@@ -1,0 +1,49 @@
+# [claude] What must not reach the build context.
+#
+# Two reasons, and the second is the one that matters. Size: the context is
+# tarred and sent to the daemon on every build, so `.git` and a local
+# virtualenv make an otherwise fast rebuild slow. And secrecy: a `COPY . .`
+# takes whatever is here, so anything holding a credential or customer data
+# has to be excluded at this layer rather than trusted not to be copied.
+
+# Secrets. `.env.*.example` is deliberately kept — it is a template with no
+# values, and it documents the variables the image expects.
+.env
+.env.*
+!.env.*.example
+
+# Development key material.
+var/dev-jwt/
+*.pem
+
+# Customer data: uploaded spreadsheets and PDFs, and the vector store built
+# from them.
+var/
+
+# Local Python state.
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# History and tooling that the running app never reads.
+.git/
+.github/
+.gitignore
+.claude/
+.langgraph_api/
+
+# Tests, evals and docs. The image runs the application; it does not run
+# the suite. CI does that, from the repository, where the whole context is
+# present.
+tests/
+evals/
+docs/
+
+# Editor and OS noise.
+.DS_Store
+.idea/
+.vscode/
