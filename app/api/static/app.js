@@ -1343,7 +1343,27 @@ class Typer {
     if (this.queue.length) this.kick();
     else if (this.ended) { this.paint(false); this.settle(); }
   }
+  /* [claude] Hand the bubble back to whoever owns what it says now.
+     Called when something other than the typed answer is on screen: an
+     error message, today.
+
+     Without this, a turn that fails before its first token loses the
+     error. `error` writes the message, the stream ends, and because
+     `finished` is only set by a `final` event that an error path never
+     sends, the loop below falls through to `typer.end()` — which repaints
+     `shown`, and `shown` is the empty string. The message survives about
+     one animation frame. The bubble keeps its `err` class, so what is
+     left on screen is a red box with nothing in it, which reads as the
+     agent having answered with silence rather than as a failure that was
+     reported. */
+  release() {
+    this.el = null;
+    this.queue = "";
+    this.ended = true;
+    if (Typer.active === this) Typer.active = null;
+  }
   paint(caret) {
+    if (!this.el) return;
     this.el.textContent = this.shown;
     if (caret) this.el.appendChild(document.createElement("span")).className = "caret";
     scrollDown();
@@ -1639,6 +1659,7 @@ async function send(preset) {
     if (!res.ok) {
       let msg = res.status + " " + res.statusText;
       try { msg = (await res.json()).error.message; } catch {}
+      typer.release();
       endStage(); body.className = "bubble err"; body.textContent = msg;
       return;
     }
@@ -1692,7 +1713,7 @@ async function send(preset) {
         }
 
         else if (event === "error") {
-          typer.flush(); endStage();
+          typer.flush(); typer.release(); endStage();
           announce("That failed.");
           body.className = "bubble err";
           body.textContent = d.message + (d.request_id ? "  ·  " + d.request_id : "");
@@ -1726,6 +1747,7 @@ async function send(preset) {
       addActions(el, { answer: typer.shown, question: text });
     } else {
       announce("That failed.");
+      typer.release();
       body.className = "bubble err";
       body.textContent = "Could not reach the agent — is it running?  (" + e.message + ")";
     }
