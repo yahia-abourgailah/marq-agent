@@ -89,13 +89,6 @@ ENV PATH="/opt/venv/bin:$PATH" \
 
 WORKDIR /app
 
-# Application code only — `.dockerignore` keeps `var/`, `.git`, the local
-# virtualenv and every `.env` out of the context entirely.
-COPY --chown=marq:marq app/ ./app/
-COPY --chown=marq:marq scripts/ ./scripts/
-COPY --chown=marq:marq migrations/ ./migrations/
-COPY --chown=marq:marq main.py ./
-
 # Uploads and the embedded vector store, when one is used. A volume belongs
 # here in any deployment that keeps them; without one they are lost with the
 # container, which is correct for a stateless replica and wrong for a single
@@ -135,6 +128,27 @@ SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
 # has to, because that image downloads the model on first use.
 ENV HF_HUB_OFFLINE=${PRELOAD_EMBEDDER} \
     TRANSFORMERS_OFFLINE=${PRELOAD_EMBEDDER}
+
+# [claude] The application, last — and last on purpose.
+#
+# This is the only thing in the image that changes on an ordinary working
+# day, and Docker rebuilds every layer below one that changed. Sitting
+# above the preload, it invalidated it: a one-line edit under `app/`
+# re-downloaded the encoder on every build. Measured at 113.8s.
+#
+# Nothing above this line needs the application source. The preload needs
+# the virtualenv and `USER marq` — so the weights land in HF_HOME rather
+# than root's cache — and neither of those needs `app/`. So the copy moves
+# to the bottom and the expensive layer stays cached across code changes.
+#
+# `.dockerignore` keeps `var/`, `.git`, the local virtualenv and every
+# `.env` out of the context entirely. `COPY --chown` is performed by the
+# build engine rather than by the container user, so it is unaffected by
+# sitting below `USER marq`.
+COPY --chown=marq:marq app/ ./app/
+COPY --chown=marq:marq scripts/ ./scripts/
+COPY --chown=marq:marq migrations/ ./migrations/
+COPY --chown=marq:marq main.py ./
 
 EXPOSE 8000
 

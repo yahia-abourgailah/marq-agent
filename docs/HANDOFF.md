@@ -1590,6 +1590,16 @@ posting them to an API — a privacy decision, not an oversight.
 `--build-arg PRELOAD_EMBEDDER=false` gives 2.3 GB and downloads on first
 upload.
 
+**The layer order was wrong until 26 August.** The application copy sat
+above the preload, so a one-line edit under `app/` invalidated it and
+re-downloaded the encoder on every build — 113.8s, on the most common
+change anyone makes. Nothing above that line needs the application source:
+the preload needs the virtualenv and `USER marq`, so the weights land in
+`HF_HOME` rather than root's cache, and neither needs `app/`. The copy is
+last now. Measured both ways with a real content change rather than a
+`touch`, because BuildKit hashes content: the preload reports `CACHED` and
+a rebuild after a code edit takes **1s**.
+
 ### Five things only running it revealed
 
 - **The stack came up healthy and every `/v1/threads` was a 500.** The
@@ -1695,6 +1705,79 @@ a ceiling of three, `[True, True, True, False, False]`.
 Not done, deliberately: the fallback's dictionary is per process, so during
 an outage the limit is loose by the worker count. Making it exact would need
 the workers to coordinate, which is the thing Redis was for.
+
+## The error that was reported and not shown — 26 August
+
+A turn that failed before its first token showed a blank box. Not a wrong
+answer, not an error — nothing, in a bubble styled as an error.
+
+Everything on the server side was already right. `stream_turn` catches,
+logs `stream_failed` with the traceback, records the turn as `error`, and
+emits an `error` event carrying a sentence and a `request_id` — a stream
+cannot change its status code once it has started, so the failure has to
+arrive as an event, and it does. Captured off the wire:
+
+    event: error
+    data: {"code": "internal_error",
+           "message": "Something went wrong answering that question.",
+           "request_id": "c6aff61afa32436f"}
+
+The console has a handler for it, and the handler runs. The proof was in a
+screenshot before it was in the code: the bubble had the `err` class — a
+red rule down its left edge where a normal answer has none — and no text.
+Something wrote the message and something else erased it.
+
+`Typer.paint()` was the something else:
+
+    paint(caret) {
+      this.el.textContent = this.shown;
+
+Unconditional. The sequence for a failed turn:
+
+1. `error` arrives; the handler sets the class and the message. Correct.
+2. The stream ends. `finished` is still `null`, because `finished` is only
+   assigned by the `final` event — and the server returns straight after
+   the error, so `final` never comes.
+3. `if (!finished) typer.end(...)` falls through to `tick()` -> `paint()`.
+4. `shown` is `""`, because the turn died before its first token. The
+   message is overwritten with the empty string, one animation frame after
+   being displayed.
+
+`Typer.release()` hands the element back and `paint()` returns early
+without one. Three call sites, and the second was found while fixing the
+first:
+
+- the `error` event, which is the bug above;
+- **the non-OK response branch**, which never called `flush()` — and
+  `flush()` is what clears `Typer.active` through `settle()`. So the typer
+  stayed registered as the live one, and the `visibilitychange` listener
+  would call `Typer.active.flush()` and wipe the message the same way.
+  Same defect, slower trigger: take a 429, switch tabs, come back to an
+  empty box;
+- the transport failure in `catch`, for the same reason.
+
+Two things worth keeping from this one.
+
+**The bug was invisible to every test that exists.** There is no JS harness
+in this repo, so this fix has no regression test, and that is stated rather
+than implied. It was found by looking at a screenshot of the thing not
+working, which is the only instrument that was pointed at it.
+
+**It is the same shape as the hidden-tab bug already documented in
+`kick()`** — "someone who switched tabs mid-answer came back to an empty
+bubble". Same empty bubble, same cause of the class: something other than
+the typer owned what the bubble said, and the typer repainted anyway. The
+first fix addressed the trigger; this one addresses the ownership, which is
+why it closed three call sites instead of one.
+
+**What it was hiding.** The turns failing were failing because
+`docker.env` still carried the placeholder `MODEL_BASE_URL` from
+`.env.docker.example` — `http://host.docker.internal:8001/v1`, a local
+model server that does not exist — while `.env.development` had pointed at
+the shared vLLM endpoint all along. A one-line configuration mistake cost
+far more than it should have, because the screen said nothing at all
+instead of "something went wrong". That is the whole argument for this
+fix: an error nobody can see is a configuration error nobody can find.
 
 ## Open items
 
