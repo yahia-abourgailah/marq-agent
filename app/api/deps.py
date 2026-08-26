@@ -16,7 +16,11 @@ from fastapi import Depends, Header, Request, status
 
 from app.api import metrics
 from app.api.errors import ApiError
-from app.api.ratelimit import RateLimiter
+from app.api.ratelimit import (
+    RateLimiter,
+    RedisRateLimiter,
+    build_rate_limiter,
+)
 from app.auth.jwt import AuthError, TokenVerifier
 from app.auth.principal import Principal
 from app.config import settings
@@ -143,7 +147,7 @@ async def get_principal(
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
 
-    _enforce_rate_limit(principal)
+    await _enforce_rate_limit(principal)
 
     return principal
 
@@ -151,14 +155,20 @@ async def get_principal(
 # [claude] One limiter per process, built lazily so `settings` is read at
 # first use rather than at import — which is what lets a test override the
 # limit without reimporting the module.
-_limiter: RateLimiter | None = None
+#
+# "Per process" now describes where the *object* lives, not where the
+# counters do: with `REDIS_URL` set, this process holds a client onto a
+# window every worker shares. See app/api/ratelimit.py.
+_limiter: RateLimiter | RedisRateLimiter | None = None
 
 
-def get_rate_limiter() -> RateLimiter:
+def get_rate_limiter() -> RateLimiter | RedisRateLimiter:
     global _limiter
 
     if _limiter is None or _limiter.per_minute != settings.rate_limit_per_minute:
-        _limiter = RateLimiter(settings.rate_limit_per_minute)
+        _limiter = build_rate_limiter(
+            settings.rate_limit_per_minute, settings.redis_url
+        )
 
     return _limiter
 
@@ -180,7 +190,26 @@ def reset_rate_limiter() -> None:
     _limiter = None
 
 
-def _enforce_rate_limit(principal: Principal) -> None:
+async def close_rate_limiter() -> None:
+    """
+    [claude] Release the Redis client, from the lifespan's shutdown.
+
+    Separate from `reset_rate_limiter` because that one is synchronous and
+    called from a fixture between tests, where the limiter is the in-memory
+    kind and there is nothing to await. Rebuilding after a settings change
+    drops a client without closing it; that path is the test suite's, and
+    the test suite does not configure Redis.
+    """
+
+    global _limiter
+
+    limiter, _limiter = _limiter, None
+
+    if limiter is not None:
+        await limiter.aclose()
+
+
+async def _enforce_rate_limit(principal: Principal) -> None:
     """
     [claude] Applied after the token is verified, on purpose.
 
@@ -195,7 +224,7 @@ def _enforce_rate_limit(principal: Principal) -> None:
     """
 
     limiter = get_rate_limiter()
-    allowed, retry_after = limiter.check(principal.subject)
+    allowed, retry_after = await limiter.check(principal.subject)
 
     # Cheap, and only on the request that is already being rejected.
     if not allowed:

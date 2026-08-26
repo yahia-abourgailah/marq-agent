@@ -201,9 +201,11 @@ services:
     image: redis:7-alpine
     ports:
       - "6380:6379"
-    # Declared because REDIS_URL is required configuration. Nothing imports
-    # redis yet; it is where the rate limiter's shared state goes when one
-    # process stops being enough.
+    # Where the rate limiter keeps its window. The agent runs two uvicorn
+    # workers, so without this the configured limit is silently doubled —
+    # each worker counting its own half of the traffic. See
+    # app/api/ratelimit.py; unset REDIS_URL and it falls back to per-process
+    # counters rather than failing.
 
 volumes:
   pgdata:

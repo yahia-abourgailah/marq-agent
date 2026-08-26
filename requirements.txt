@@ -90,7 +90,8 @@ sse-starlette>=2.1
 PyJWT[crypto]>=2.8
 
 # --- Not yet imported by any module; kept for planned work ---------------
-# Caching (no code imports redis yet)
+# Shared rate-limit state (app/api/ratelimit.py). Optional: unset
+# REDIS_URL and the limiter keeps its counters in this process.
 redis>=5.0
 
 langchain-tavily>=0.2.13

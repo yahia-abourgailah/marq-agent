@@ -100,12 +100,18 @@ async def lifespan(app: FastAPI):
 
     app.state.workspace_service = get_workspace_service()
 
+    # [claude] Built here rather than at the first request so the backend
+    # is a fact in the boot log. The two limiters behave identically until
+    # a second worker exists, which is exactly when nobody is watching.
+    from app.api.deps import get_rate_limiter
+
     logger.info(
         "started",
         extra={
             "persistent_checkpoints": app.state.checkpointer.is_persistent,
             "read_only_db": app_db.is_read_only,
             "auth_dev_mode": settings.auth_dev_mode,
+            "rate_limit_backend": get_rate_limiter().backend,
         },
     )
 
@@ -114,6 +120,9 @@ async def lifespan(app: FastAPI):
     finally:
         logger.info("shutting_down")
 
+        from app.api.deps import close_rate_limiter
+
+        await close_rate_limiter()
         await app.state.checkpointer.aclose()
         await state_pool.close()
         await app_db.close()

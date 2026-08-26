@@ -777,9 +777,9 @@ Two things learned building it:
 - **No refresh, revocation or key rotation.** Tokens are verified against one
   statically configured key. A JWKS endpoint with caching is the usual next
   step and is not here.
-- **No rate limiting.** A single caller can occupy every worker with slow
-  model calls. `redis` is already a dependency and is still imported by
-  nothing.
+- ~~No rate limiting.~~ **Built** — a per-caller ceiling from the 24 August
+  review, and as of 25 August its counters live in Redis, so the limit is
+  one limit rather than one per worker. See "One limit, not one per worker".
 - **`/v1/chat` has no timeout of its own.** A turn is bounded only by the
   step ceiling and the model client's own 30s-per-call timeout.
 - **The workspace is one per employee.** No sharing, no team workspaces.
@@ -1632,6 +1632,69 @@ file**, because any deployment starting replicas in parallel against a fresh
 database has this and Kubernetes does it by default.
 `tests/test_checkpoint_race.py` races four callers at an empty database;
 checked both ways, it reproduces the violation with the fix reverted.
+
+## One limit, not one per worker — 25 August
+
+`redis` had been a pinned dependency, a required setting and a declared
+compose service since the container work, and was imported by nothing. This
+is the thing it was declared for.
+
+The rate limiter from the 24 August review kept its fixed window in a
+dictionary, which is correct for one process and quietly wrong for two. The
+compose stack runs uvicorn with two workers — the boot log says so twice,
+`Started server process [8]` and `[9]` — so a configured ceiling of 30
+admitted 60, each worker counting its own half and neither aware of the
+other. Nothing about that shows up in a single-process test, which is why it
+survived the review that introduced the limiter.
+
+`app/api/ratelimit.py` now has two backends behind one interface.
+`build_rate_limiter()` picks on `REDIS_URL`, and the choice is reported in
+the boot log as `rate_limit_backend` rather than inferred, because the two
+are indistinguishable until the second worker exists — which is exactly when
+nobody is looking.
+
+**The window is aligned to the wall clock, and that was forced rather than
+chosen.** Two workers can agree on `int(time.time()) // 60` without talking
+to each other. They cannot agree on "when did alice first call" without a
+round trip to find out, and a limiter that reads before it writes has a race
+in it. What changes for a caller: `Retry-After` counts down to the top of
+the minute rather than to sixty seconds after their own first request. What
+does not change is the guarantee — a runaway tab is stopped inside a minute.
+`INCR` still runs on the rejected request, so hammering still buys no reset.
+
+**A cache outage must not become an API outage, and must not become an
+unlimited API either.** Every failure — refused, timed out, a `MISCONF` from
+a Redis that cannot snapshot, a client exception this module has never heard
+of — falls back to the in-memory limiter, which is the behaviour the service
+had until today: weaker, still a limit. The transition is logged once per
+outage rather than once per request.
+
+**The part that was wrong until it was measured.** The first version had the
+fallback and the short socket timeout and looked finished. Against a
+blackholed address — packets dropped rather than refused, which is what a
+*hung* Redis looks like, as opposed to a stopped one — it paid the full
+connect timeout on every single request:
+
+    first call   0.253s
+    second call  0.251s
+
+Falling back is only half of surviving an outage; the other half is not
+asking again for a while. `REDIS_RETRY_SECONDS` holds the circuit open for
+five seconds after a failure, so an outage costs one 250ms probe per five
+seconds instead of 250ms per request, and a recovery is noticed within five
+seconds of happening. Re-measured after the fix: 252.7ms, then five calls at
+0.0ms. This is the same lesson as "Measure, do not estimate" above, and it
+is worth noticing that the bug was in the *mitigation* — the code written to
+handle a failure was the code that had not been run against one.
+
+Eleven cases in `tests/test_load_limits.py`, against a double rather than a
+server: two limiters over one store, which is what two workers are. Verified
+against a real Redis as well — `docker compose up -d redis`, two limiters at
+a ceiling of three, `[True, True, True, False, False]`.
+
+Not done, deliberately: the fallback's dictionary is per process, so during
+an outage the limit is loose by the worker count. Making it exact would need
+the workers to coordinate, which is the thing Redis was for.
 
 ## Open items
 
