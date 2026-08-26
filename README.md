@@ -132,10 +132,16 @@ conversation tables — before the agent starts. It deliberately does not
 apply 001 or 002: those are decisions about a real CRM, taken by hand, in an
 order that matters. See `migrations/README.md`.
 
-**Host ports are offset by one**: `8080`, `5433`, `6334`, `6380`. A machine
-that develops this project already runs a Postgres on 5432 and probably
-`python main.py` on 8000, and two services answering on one port is how a
-migration lands on the wrong database.
+**The backing services are offset by one**: `5433`, `6334`, `6380`. A machine
+that develops this project already runs a Postgres on 5432, and two services
+answering on one port is how a migration lands on the wrong database.
+
+**The agent itself is not offset.** It answers on `8000` — the same port as
+`python main.py` — so run one or the other. An earlier version of the compose
+file moved it to `8080` so the two could coexist; they can, and it was the
+wrong thing to encourage, because it means two servers, two databases and two
+sets of conversations with nothing on screen saying which one you are looking
+at. This line said `8080` for longer than that was true.
 
 The CRM tables are not created by compose. Point `POSTGRES_*` at a real
 database, or load the development fixture from the host:
